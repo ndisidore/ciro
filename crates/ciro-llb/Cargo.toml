@@ -1,0 +1,13 @@
+[package]
+name = "ciro-llb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ciro-core.workspace = true
+buildkit-llb.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

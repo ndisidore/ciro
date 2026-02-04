@@ -1,0 +1,38 @@
+[tools]
+rust = "1.93"
+
+[tasks.build]
+description = "Build all crates"
+run = "cargo build"
+
+[tasks.check]
+description = "Run cargo check"
+run = "cargo check --workspace"
+
+[tasks.test]
+description = "Run all tests"
+run = "cargo test --workspace"
+
+[tasks.lint]
+description = "Run clippy lints"
+run = "cargo clippy --workspace -- -D warnings"
+
+[tasks.fmt]
+description = "Format code"
+run = "cargo fmt --all"
+
+[tasks."fmt:check"]
+description = "Check formatting"
+run = "cargo fmt --all -- --check"
+
+[tasks.validate]
+description = "Validate a KDL pipeline file"
+run = "cargo run -p ciro-cli -- validate"
+
+[tasks.run]
+description = "Run a KDL pipeline"
+run = "cargo run -p ciro-cli -- run"
+
+[tasks.ci]
+description = "Run all CI checks"
+depends = ["fmt:check", "lint", "test"]

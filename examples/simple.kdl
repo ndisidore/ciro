@@ -1,0 +1,14 @@
+pipeline "hello" {
+  step "greet" {
+    image "alpine:latest"
+    run "echo 'Hello from Ciro!'"
+  }
+
+  step "build" {
+    image "rust:1.76"
+    depends-on "greet"
+    mount "." "/src"
+    workdir "/src"
+    run "cargo build"
+  }
+}

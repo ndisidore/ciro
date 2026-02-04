@@ -1,0 +1,15 @@
+[package]
+name = "ciro-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ciro-core.workspace = true
+buildkit-frontend.workspace = true
+tonic.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
