@@ -1,3 +1,7 @@
 //! KDL parser for Ciro CI pipelines.
 
-// TODO: Implement in Phase 2
+mod error;
+mod parser;
+
+pub use error::ParseError;
+pub use parser::parse_pipeline;

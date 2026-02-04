@@ -373,6 +373,7 @@ dependencies = [
 name = "ciro-cli"
 version = "0.1.0"
 dependencies = [
+ "ciro-parser",
  "clap",
  "miette",
  "tracing",

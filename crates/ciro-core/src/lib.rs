@@ -2,4 +2,4 @@
 
 pub mod pipeline;
 
-pub use pipeline::{Mount, Pipeline, Step};
+pub use pipeline::{Cache, Mount, Pipeline, Step};

@@ -1,0 +1,98 @@
+// Ciro CI Pipeline Schema
+// This schema documents the structure of Ciro pipeline files.
+
+document {
+    info {
+        title "Ciro CI Pipeline"
+        description "Schema for Ciro CI pipeline configuration files"
+        version "0.1.0"
+    }
+
+    node "pipeline" {
+        description "Root node defining a CI pipeline"
+        min 1
+        max 1
+
+        value {
+            type "string"
+            description "Name of the pipeline"
+        }
+
+        children {
+            node "step" {
+                description "A step in the pipeline"
+                min 1
+
+                value {
+                    type "string"
+                    description "Name of the step (must be unique)"
+                }
+
+                children {
+                    node "image" {
+                        description "Container image to use for this step"
+                        min 1
+                        max 1
+                        value {
+                            type "string"
+                            description "Docker image reference"
+                        }
+                    }
+
+                    node "run" {
+                        description "Command to run"
+                        min 0
+                        value {
+                            type "string"
+                            description "Shell command to execute"
+                        }
+                    }
+
+                    node "workdir" {
+                        description "Working directory for commands"
+                        max 1
+                        value {
+                            type "string"
+                            description "Path inside the container"
+                        }
+                    }
+
+                    node "depends-on" {
+                        description "Step dependency"
+                        min 0
+                        value {
+                            type "string"
+                            description "Name of the step this depends on"
+                        }
+                    }
+
+                    node "mount" {
+                        description "Bind mount from host to container"
+                        min 0
+                        value {
+                            type "string"
+                            description "Source path"
+                        }
+                        value {
+                            type "string"
+                            description "Target path in container"
+                        }
+                    }
+
+                    node "cache" {
+                        description "Cache mount for build caching"
+                        min 0
+                        value {
+                            type "string"
+                            description "Cache identifier"
+                        }
+                        value {
+                            type "string"
+                            description "Target path in container"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
