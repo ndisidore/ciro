@@ -14,3 +14,7 @@ Thumbs.db
 
 # Mise
 .mise.local.toml
+
+# Environment
+.env
+.env.*

@@ -1,5 +1,9 @@
 //! KDL to Pipeline parser implementation.
 
+// Diagnostic errors intentionally carry source context for rich error messages.
+// This makes the error type large, but is a deliberate design choice for good UX.
+#![allow(clippy::result_large_err)]
+
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -47,11 +51,13 @@ fn parse_document(doc: &KdlDocument, src: NamedSource<String>) -> Result<Pipelin
 
     let name = get_first_string_arg(pipeline_node, "pipeline", &src)?;
 
-    let children = pipeline_node.children().ok_or_else(|| ParseError::MissingNode {
-        node: "step".to_string(),
-        src: src.clone(),
-        span: node_span(pipeline_node),
-    })?;
+    let children = pipeline_node
+        .children()
+        .ok_or_else(|| ParseError::MissingNode {
+            node: "step".to_string(),
+            src: src.clone(),
+            span: node_span(pipeline_node),
+        })?;
 
     let mut steps = Vec::new();
     let mut step_names = HashSet::new();

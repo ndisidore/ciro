@@ -24,7 +24,7 @@ enum Commands {
         /// Path to the KDL pipeline file
         file: PathBuf,
 
-        /// BuildKit daemon address
+        /// `BuildKit` daemon address
         #[arg(long, default_value = "tcp://127.0.0.1:1234")]
         addr: String,
 
