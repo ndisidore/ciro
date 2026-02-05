@@ -1,0 +1,81 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+
+language: en-US
+
+tone_instructions: >-
+  Be direct and technical. Focus on correctness, performance, and idiomatic
+  Rust patterns. Flag issues clearly without excessive praise.
+
+reviews:
+  profile: assertive
+  request_changes_workflow: true
+  high_level_summary: true
+  commit_status: true
+  collapse_walkthrough: true
+  changed_files_summary: true
+  sequence_diagrams: false
+  poem: false
+  review_status: true
+  suggested_labels: true
+  suggested_reviewers: true
+  auto_apply_labels: false
+  auto_assign_reviewers: false
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    ignore_title_keywords:
+      - "WIP"
+      - "DRAFT"
+      - "[WIP]"
+      - "[DRAFT]"
+
+  path_filters:
+    - "!target/**"
+    - "!**/target/**"
+    - "!vendor/**"
+    - "!**/vendor/**"
+    - "!**/generated/**"
+    - "!**/*.generated.rs"
+
+  # Exceptions to CLAUDE.md rules (which is auto-applied via knowledge_base.code_guidelines)
+  path_instructions:
+    - path: "**/tests/**/*.rs"
+      instructions: |
+        Test code exceptions: `.unwrap()`, `.expect()`, `println!`, `dbg!` are acceptable.
+        Focus on test coverage, assertion quality, and Arrange-Act-Assert pattern.
+        Flag flaky patterns (timing dependencies, global state).
+
+    - path: "**/benches/**/*.rs"
+      instructions: |
+        Benchmark exceptions: `.unwrap()` is acceptable.
+        Focus on methodology correctness and black_box usage for inputs/outputs.
+
+    - path: "**/examples/**/*.rs"
+      instructions: |
+        Example exceptions: `.unwrap()` is acceptable for brevity.
+        Focus on clarity and idiomatic usage demonstration.
+
+  tools:
+    semgrep:
+      enabled: true
+    gitleaks:
+      enabled: true
+    clippy:
+      enabled: true
+
+chat:
+  auto_reply: true
+
+knowledge_base:
+  web_search:
+    enabled: true
+  learnings:
+    scope: local
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CLAUDE.md"
+      - ".cursorrules"
+      - "CONTRIBUTING.md"
