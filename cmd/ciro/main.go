@@ -2,11 +2,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 
 	"github.com/urfave/cli/v2"
+
+	"github.com/ndisidore/ciro/pkg/parser"
 )
 
 func main() {
@@ -41,17 +44,31 @@ func main() {
 	}
 
 	if err := app.Run(os.Args); err != nil {
-		slog.Error("fatal", "error", err)
+		slog.Error("fatal", slog.Any("error", err))
 		os.Exit(1)
 	}
 }
 
-func validateAction(_ *cli.Context) error {
-	fmt.Println("validate: not yet implemented")
+func validateAction(c *cli.Context) error {
+	path := c.Args().First()
+	if path == "" {
+		return errors.New("usage: ciro validate <file>")
+	}
+
+	p, err := parser.ParseFile(path)
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Printf("Pipeline '%s' is valid\n", p.Name)
+	_, _ = fmt.Printf("  Steps: %d\n", len(p.Steps))
+	for _, s := range p.Steps {
+		_, _ = fmt.Printf("    - %s (image: %s)\n", s.Name, s.Image)
+	}
 	return nil
 }
 
 func runAction(_ *cli.Context) error {
-	fmt.Println("run: not yet implemented")
+	_, _ = fmt.Println("run: not yet implemented")
 	return nil
 }

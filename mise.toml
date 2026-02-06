@@ -1,5 +1,6 @@
 [tools]
-go = "1.23"
+go = "1.25"
+"golangci-lint" = "2.8.0"
 
 [tasks.build]
 description = "Build all packages"
