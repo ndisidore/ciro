@@ -1,38 +1,38 @@
 [tools]
-rust = "1.93"
+go = "1.23"
 
 [tasks.build]
-description = "Build all crates"
-run = "cargo build"
-
-[tasks.check]
-description = "Run cargo check"
-run = "cargo check --workspace"
+description = "Build all packages"
+run = "go build ./..."
 
 [tasks.test]
 description = "Run all tests"
-run = "cargo test --workspace"
+run = "go test -race ./..."
+
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."
 
 [tasks.lint]
-description = "Run clippy lints"
-run = "cargo clippy --workspace -- -D warnings"
+description = "Run golangci-lint"
+run = "golangci-lint run"
 
 [tasks.fmt]
 description = "Format code"
-run = "cargo fmt --all"
+run = "gofmt -w ."
 
 [tasks."fmt:check"]
 description = "Check formatting"
-run = "cargo fmt --all -- --check"
+run = 'test -z "$(gofmt -l .)"'
 
 [tasks.validate]
 description = "Validate a KDL pipeline file"
-run = "cargo run -p ciro-cli -- validate"
+run = "go run ./cmd/ciro validate"
 
 [tasks.run]
 description = "Run a KDL pipeline"
-run = "cargo run -p ciro-cli -- run"
+run = "go run ./cmd/ciro run"
 
 [tasks.ci]
 description = "Run all CI checks"
-depends = ["fmt:check", "lint", "test"]
+depends = ["fmt:check", "vet", "lint", "test"]

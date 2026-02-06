@@ -1,0 +1,13 @@
+pipeline "hello" {
+    step "greet" {
+        image "alpine:latest"
+        run "echo 'Hello from Ciro!'"
+    }
+
+    step "info" {
+        image "alpine:latest"
+        depends-on "greet"
+        run "uname -a"
+        run "date"
+    }
+}
