@@ -16,10 +16,14 @@ import (
 
 // Sentinel errors for parse failures.
 var (
-	ErrNoPipeline   = errors.New("no pipeline node found")
-	ErrMissingName  = errors.New("pipeline node missing name argument")
-	ErrUnknownNode  = errors.New("unknown node type")
-	ErrMissingField = errors.New("missing required field")
+	ErrNoPipeline        = errors.New("no pipeline node found")
+	ErrMultiplePipelines = errors.New("multiple pipeline nodes found")
+	ErrMissingName       = errors.New("pipeline node missing name argument")
+	ErrUnknownNode       = errors.New("unknown node type")
+	ErrMissingField      = errors.New("missing required field")
+	ErrDuplicateField    = errors.New("duplicate field")
+	ErrExtraArgs         = errors.New("too many arguments")
+	ErrTypeMismatch      = errors.New("argument type mismatch")
 )
 
 // ParseFile reads and parses a KDL pipeline file at the given path.
@@ -40,13 +44,21 @@ func Parse(r io.Reader, filename string) (pipeline.Pipeline, error) {
 		return pipeline.Pipeline{}, fmt.Errorf("parsing %s: %w", filename, err)
 	}
 
+	var pipelineNode *document.Node
 	for _, node := range doc.Nodes {
 		if node.Name.ValueString() == "pipeline" {
-			return parsePipeline(node, filename)
+			if pipelineNode != nil {
+				return pipeline.Pipeline{}, fmt.Errorf("%s: %w", filename, ErrMultiplePipelines)
+			}
+			pipelineNode = node
 		}
 	}
 
-	return pipeline.Pipeline{}, fmt.Errorf("%s: %w", filename, ErrNoPipeline)
+	if pipelineNode == nil {
+		return pipeline.Pipeline{}, fmt.Errorf("%s: %w", filename, ErrNoPipeline)
+	}
+
+	return parsePipeline(pipelineNode, filename)
 }
 
 // ParseString parses KDL content from a string into a Pipeline.
@@ -58,7 +70,7 @@ func parsePipeline(node *document.Node, filename string) (pipeline.Pipeline, err
 	name, err := stringArg(node, 0)
 	if err != nil {
 		return pipeline.Pipeline{}, fmt.Errorf(
-			"%s: pipeline name: %w", filename, ErrMissingName,
+			"%s: %w: %w", filename, ErrMissingName, err,
 		)
 	}
 
@@ -92,7 +104,7 @@ func parseStep(node *document.Node, filename string) (pipeline.Step, error) {
 	name, err := stringArg(node, 0)
 	if err != nil {
 		return pipeline.Step{}, fmt.Errorf(
-			"%s: step missing name: %w", filename, ErrMissingField,
+			"%s: step missing name: %w: %w", filename, ErrMissingField, err,
 		)
 	}
 
@@ -115,8 +127,7 @@ func applyStepField(s *pipeline.Step, node *document.Node, filename string) erro
 		if err != nil {
 			return err
 		}
-		setSingleArg(s, childName, v)
-		return nil
+		return setSingleArg(s, childName, v, filename)
 	case "mount":
 		m, err := stringArgs2(node, filename, "mount")
 		if err != nil {
@@ -138,33 +149,56 @@ func applyStepField(s *pipeline.Step, node *document.Node, filename string) erro
 	}
 }
 
-func setSingleArg(s *pipeline.Step, field, value string) {
+func setSingleArg(s *pipeline.Step, field, value, filename string) error {
 	switch field {
 	case "image":
+		if s.Image != "" {
+			return fmt.Errorf(
+				"%s: step %q: %w: %q", filename, s.Name, ErrDuplicateField, field,
+			)
+		}
 		s.Image = value
 	case "run":
 		s.Run = append(s.Run, value)
 	case "workdir":
+		if s.Workdir != "" {
+			return fmt.Errorf(
+				"%s: step %q: %w: %q", filename, s.Name, ErrDuplicateField, field,
+			)
+		}
 		s.Workdir = value
 	case "depends-on":
 		s.DependsOn = append(s.DependsOn, value)
 	default:
 		// Unreachable: only called from applyStepField with known fields.
 	}
+	return nil
 }
 
 // stringArgs2 extracts exactly two string arguments from a node.
 func stringArgs2(node *document.Node, filename, field string) ([2]string, error) {
+	switch {
+	case len(node.Arguments) < 2:
+		return [2]string{}, fmt.Errorf(
+			"%s: %s requires exactly two arguments, got %d: %w",
+			filename, field, len(node.Arguments), ErrMissingField,
+		)
+	case len(node.Arguments) > 2:
+		return [2]string{}, fmt.Errorf(
+			"%s: %s requires exactly two arguments, got %d: %w",
+			filename, field, len(node.Arguments), ErrExtraArgs,
+		)
+	}
 	first, err := stringArg(node, 0)
 	if err != nil {
 		return [2]string{}, fmt.Errorf(
-			"%s: %s requires two arguments: %w", filename, field, ErrMissingField,
+			"%s: %s first argument: %w: %w", filename, field, ErrTypeMismatch, err,
 		)
 	}
 	second, err := stringArg(node, 1)
 	if err != nil {
 		return [2]string{}, fmt.Errorf(
-			"%s: %s requires two arguments: %w", filename, field, ErrMissingField,
+			"%s: %s second argument: %w: %w", filename, field, ErrTypeMismatch, err,
 		)
 	}
 	return [2]string{first, second}, nil

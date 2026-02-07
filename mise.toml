@@ -3,8 +3,8 @@ go = "1.25"
 "golangci-lint" = "2.8.0"
 
 [tasks.build]
-description = "Build all packages"
-run = "go build ./..."
+description = "Build the ciro CLI binary"
+run = "mkdir -p ./bin && go build -o ./bin/ciro ./cmd/ciro"
 
 [tasks.test]
 description = "Run all tests"
@@ -28,11 +28,13 @@ run = 'test -z "$(gofmt -l .)"'
 
 [tasks.validate]
 description = "Validate a KDL pipeline file"
-run = "go run ./cmd/ciro validate"
+usage = "validate <file>"
+run = "go run ./cmd/ciro validate {{arg(name='file')}}"
 
 [tasks.run]
 description = "Run a KDL pipeline"
-run = "go run ./cmd/ciro run"
+usage = "run <file>"
+run = "go run ./cmd/ciro run {{arg(name='file')}}"
 
 [tasks.ci]
 description = "Run all CI checks"

@@ -19,30 +19,43 @@ type Result struct {
 	StepNames []string
 }
 
-// Build converts a validated pipeline to BuildKit LLB definitions.
-// Each step produces its own definition; dependency ordering is returned via
-// topological sort order so the runner can execute them sequentially.
+// Build converts a pipeline to BuildKit LLB definitions.
+// It validates, topologically sorts, then marshals each step.
 func Build(ctx context.Context, p pipeline.Pipeline) (Result, error) {
-	order := p.TopoSort()
+	if err := p.Validate(); err != nil {
+		return Result{}, fmt.Errorf("validating pipeline: %w", err)
+	}
+
+	order, err := p.TopoSort()
+	if err != nil {
+		return Result{}, fmt.Errorf("sorting pipeline: %w", err)
+	}
+
 	result := Result{
 		Definitions: make([]*llb.Definition, 0, len(order)),
 		StepNames:   make([]string, 0, len(order)),
 	}
 
+	states := make(map[string]llb.State, len(order))
 	for _, idx := range order {
 		step := &p.Steps[idx]
-		def, err := buildStep(ctx, step)
+		def, st, err := buildStep(ctx, step, states)
 		if err != nil {
 			return Result{}, fmt.Errorf("building step %q: %w", step.Name, err)
 		}
 		result.Definitions = append(result.Definitions, def)
 		result.StepNames = append(result.StepNames, step.Name)
+		states[step.Name] = st
 	}
 
 	return result, nil
 }
 
-func buildStep(ctx context.Context, step *pipeline.Step) (*llb.Definition, error) {
+func buildStep(ctx context.Context, step *pipeline.Step, depStates map[string]llb.State) (*llb.Definition, llb.State, error) {
+	if len(step.Run) == 0 {
+		return nil, llb.State{}, fmt.Errorf("step %q: %w", step.Name, pipeline.ErrMissingRun)
+	}
+
 	st := llb.Image(step.Image)
 
 	if step.Workdir != "" {
@@ -53,6 +66,16 @@ func buildStep(ctx context.Context, step *pipeline.Step) (*llb.Definition, error
 	runOpts := []llb.RunOption{
 		llb.Args([]string{"/bin/sh", "-c", cmd}),
 		llb.WithCustomName(step.Name),
+	}
+
+	for _, dep := range step.DependsOn {
+		if depSt, ok := depStates[dep]; ok {
+			runOpts = append(runOpts, llb.AddMount(
+				"/deps/"+dep,
+				depSt,
+				llb.Readonly,
+			))
+		}
 	}
 
 	for _, m := range step.Mounts {
@@ -72,9 +95,10 @@ func buildStep(ctx context.Context, step *pipeline.Step) (*llb.Definition, error
 		))
 	}
 
-	def, err := st.Run(runOpts...).Root().Marshal(ctx)
+	execState := st.Run(runOpts...).Root()
+	def, err := execState.Marshal(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("marshaling: %w", err)
+		return nil, llb.State{}, fmt.Errorf("marshaling: %w", err)
 	}
-	return def, nil
+	return def, execState, nil
 }

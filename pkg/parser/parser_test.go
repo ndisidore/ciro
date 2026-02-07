@@ -1,9 +1,10 @@
 package parser
 
 import (
-	"errors"
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ndisidore/ciro/pkg/pipeline"
 )
@@ -179,6 +180,51 @@ func TestParse(t *testing.T) {
 			}`,
 			wantErr: ErrUnknownNode,
 		},
+		{
+			name: "duplicate image field",
+			input: `pipeline "bad" {
+				step "a" {
+					image "alpine:latest"
+					image "ubuntu:latest"
+					run "echo hi"
+				}
+			}`,
+			wantErr: ErrDuplicateField,
+		},
+		{
+			name: "duplicate workdir field",
+			input: `pipeline "bad" {
+				step "a" {
+					image "alpine:latest"
+					workdir "/a"
+					workdir "/b"
+					run "echo hi"
+				}
+			}`,
+			wantErr: ErrDuplicateField,
+		},
+		{
+			name: "mount with extra arguments",
+			input: `pipeline "bad" {
+				step "a" {
+					image "alpine:latest"
+					mount "a" "b" "c"
+					run "echo hi"
+				}
+			}`,
+			wantErr: ErrExtraArgs,
+		},
+		{
+			name: "self dependency",
+			input: `pipeline "bad" {
+				step "a" {
+					image "alpine:latest"
+					depends-on "a"
+					run "echo hi"
+				}
+			}`,
+			wantErr: pipeline.ErrSelfDependency,
+		},
 	}
 
 	for _, tt := range tests {
@@ -188,22 +234,12 @@ func TestParse(t *testing.T) {
 			got, err := ParseString(tt.input)
 
 			if tt.wantErr != nil {
-				if err == nil {
-					t.Fatalf("expected error wrapping %v, got nil", tt.wantErr)
-				}
-				if !errors.Is(err, tt.wantErr) {
-					t.Fatalf("expected error wrapping %v, got: %v", tt.wantErr, err)
-				}
+				require.ErrorIs(t, err, tt.wantErr)
 				return
 			}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("got %+v, want %+v", got, tt.want)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

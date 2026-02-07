@@ -8,12 +8,14 @@ import (
 
 // Sentinel errors for pipeline validation.
 var (
-	ErrEmptyPipeline = errors.New("pipeline has no steps")
-	ErrDuplicateStep = errors.New("duplicate step name")
-	ErrMissingImage  = errors.New("step missing image")
-	ErrMissingRun    = errors.New("step has no run commands")
-	ErrUnknownDep    = errors.New("unknown dependency")
-	ErrCycleDetected = errors.New("dependency cycle detected")
+	ErrEmptyPipeline  = errors.New("pipeline has no steps")
+	ErrEmptyStepName  = errors.New("step has empty name")
+	ErrDuplicateStep  = errors.New("duplicate step name")
+	ErrMissingImage   = errors.New("step missing image")
+	ErrMissingRun     = errors.New("step has no run commands")
+	ErrSelfDependency = errors.New("step depends on itself")
+	ErrUnknownDep     = errors.New("unknown dependency")
+	ErrCycleDetected  = errors.New("dependency cycle detected")
 )
 
 // Pipeline represents a CI/CD pipeline parsed from KDL.
@@ -55,6 +57,10 @@ func (p *Pipeline) Validate() error {
 	for i := range p.Steps {
 		s := &p.Steps[i]
 
+		if s.Name == "" {
+			return fmt.Errorf("step at index %d: %w", i, ErrEmptyStepName)
+		}
+
 		if _, exists := names[s.Name]; exists {
 			return fmt.Errorf("step %q: %w", s.Name, ErrDuplicateStep)
 		}
@@ -68,19 +74,22 @@ func (p *Pipeline) Validate() error {
 		}
 	}
 
-	if err := checkDepRefs(p.Steps, names); err != nil {
+	if err := checkSelfDeps(p.Steps); err != nil {
 		return err
 	}
-	return detectCycles(p.Steps)
+
+	// topoSort validates unknown deps and cycles via 3-state DFS.
+	_, err := p.TopoSort()
+	return err
 }
 
-// checkDepRefs verifies that all dependency references point to existing steps.
-func checkDepRefs(steps []Step, names map[string]struct{}) error {
+// checkSelfDeps detects steps that list themselves as a dependency.
+func checkSelfDeps(steps []Step) error {
 	for i := range steps {
 		for _, dep := range steps[i].DependsOn {
-			if _, exists := names[dep]; !exists {
+			if dep == steps[i].Name {
 				return fmt.Errorf(
-					"step %q depends on %q: %w", steps[i].Name, dep, ErrUnknownDep,
+					"step %q depends on itself: %w", steps[i].Name, ErrSelfDependency,
 				)
 			}
 		}
@@ -88,20 +97,47 @@ func checkDepRefs(steps []Step, names map[string]struct{}) error {
 	return nil
 }
 
-// detectCycles uses DFS coloring to find dependency cycles among steps.
-func detectCycles(steps []Step) error {
+// TopoSort returns step indices in topological order (dependencies first).
+// Returns an error if an unknown dependency is encountered.
+func (p *Pipeline) TopoSort() ([]int, error) {
+	g := newStepGraph(p.Steps)
+	return g.topoSort()
+}
+
+// stepGraph provides indexed graph operations over a step slice.
+type stepGraph struct {
+	steps []Step
+	index map[string]int
+}
+
+func newStepGraph(steps []Step) stepGraph {
+	idx := make(map[string]int, len(steps))
+	for i := range steps {
+		idx[steps[i].Name] = i
+	}
+	return stepGraph{steps: steps, index: idx}
+}
+
+// resolveDep looks up a dependency by name, returning a clear error for unknown deps.
+func (g *stepGraph) resolveDep(stepName, dep string) (int, error) {
+	j, ok := g.index[dep]
+	if !ok {
+		return 0, fmt.Errorf(
+			"step %q depends on %q: %w", stepName, dep, ErrUnknownDep,
+		)
+	}
+	return j, nil
+}
+
+func (g *stepGraph) topoSort() ([]int, error) {
 	const (
 		unvisited = iota
 		visiting
 		visited
 	)
 
-	index := make(map[string]int, len(steps))
-	for i := range steps {
-		index[steps[i].Name] = i
-	}
-
-	state := make([]int, len(steps))
+	state := make([]int, len(g.steps))
+	order := make([]int, 0, len(g.steps))
 
 	var visit func(int) error
 	visit = func(i int) error {
@@ -109,51 +145,27 @@ func detectCycles(steps []Step) error {
 		case visited:
 			return nil
 		case visiting:
-			return fmt.Errorf("step %q: %w", steps[i].Name, ErrCycleDetected)
+			return fmt.Errorf("step %q: %w", g.steps[i].Name, ErrCycleDetected)
 		}
 		state[i] = visiting
-		for _, dep := range steps[i].DependsOn {
-			if err := visit(index[dep]); err != nil {
+		for _, dep := range g.steps[i].DependsOn {
+			j, err := g.resolveDep(g.steps[i].Name, dep)
+			if err != nil {
+				return err
+			}
+			if err := visit(j); err != nil {
 				return err
 			}
 		}
 		state[i] = visited
+		order = append(order, i)
 		return nil
 	}
 
-	for i := range steps {
+	for i := range g.steps {
 		if err := visit(i); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
-}
-
-// TopoSort returns step indices in topological order (dependencies first).
-// It assumes the pipeline has already been validated (no cycles or missing deps).
-func (p *Pipeline) TopoSort() []int {
-	index := make(map[string]int, len(p.Steps))
-	for i := range p.Steps {
-		index[p.Steps[i].Name] = i
-	}
-
-	visited := make([]bool, len(p.Steps))
-	order := make([]int, 0, len(p.Steps))
-
-	var visit func(int)
-	visit = func(i int) {
-		if visited[i] {
-			return
-		}
-		visited[i] = true
-		for _, dep := range p.Steps[i].DependsOn {
-			visit(index[dep])
-		}
-		order = append(order, i)
-	}
-
-	for i := range p.Steps {
-		visit(i)
-	}
-	return order
+	return order, nil
 }
