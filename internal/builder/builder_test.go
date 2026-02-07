@@ -4,6 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/ndisidore/ciro/pkg/pipeline"
 )
 
@@ -14,7 +17,7 @@ func TestBuild(t *testing.T) {
 		name      string
 		p         pipeline.Pipeline
 		wantSteps int
-		wantErr   bool
+		wantErr   error
 	}{
 		{
 			name: "single step",
@@ -119,6 +122,20 @@ func TestBuild(t *testing.T) {
 			},
 			wantSteps: 2,
 		},
+		{
+			name: "empty run commands",
+			p: pipeline.Pipeline{
+				Name: "bad",
+				Steps: []pipeline.Step{
+					{
+						Name:  "empty",
+						Image: "alpine:latest",
+						Run:   nil,
+					},
+				},
+			},
+			wantErr: pipeline.ErrMissingRun,
+		},
 	}
 
 	for _, tt := range tests {
@@ -126,37 +143,50 @@ func TestBuild(t *testing.T) {
 			t.Parallel()
 
 			result, err := Build(context.Background(), tt.p)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("expected error, got nil")
-				}
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
 				return
 			}
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if len(result.Definitions) != tt.wantSteps {
-				t.Errorf(
-					"definitions count = %d, want %d",
-					len(result.Definitions), tt.wantSteps,
-				)
-			}
-			if len(result.StepNames) != tt.wantSteps {
-				t.Errorf(
-					"step names count = %d, want %d",
-					len(result.StepNames), tt.wantSteps,
-				)
-			}
+			require.NoError(t, err)
+			assert.Len(t, result.Definitions, tt.wantSteps)
+			assert.Len(t, result.StepNames, tt.wantSteps)
 			for i, def := range result.Definitions {
-				if def == nil {
-					t.Errorf("definition[%d] is nil", i)
-				}
-				if len(def.Def) == 0 {
-					t.Errorf("definition[%d] has no operations", i)
-				}
+				require.NotNilf(t, def, "definition[%d] is nil", i)
+				assert.NotEmptyf(t, def.Def, "definition[%d] has no operations", i)
 			}
 		})
 	}
+}
+
+func TestBuildWithPresetTopoOrder(t *testing.T) {
+	t.Parallel()
+
+	p := pipeline.Pipeline{
+		Name: "cached",
+		Steps: []pipeline.Step{
+			{
+				Name:  "a",
+				Image: "alpine:latest",
+				Run:   []string{"echo a"},
+			},
+			{
+				Name:  "b",
+				Image: "alpine:latest",
+				Run:   []string{"echo b"},
+			},
+			{
+				Name:  "c",
+				Image: "alpine:latest",
+				Run:   []string{"echo c"},
+			},
+		},
+		TopoOrder: []int{0, 1, 2},
+	}
+
+	result, err := Build(context.Background(), p)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b", "c"}, result.StepNames)
+	assert.Len(t, result.Definitions, 3)
 }
 
 func TestBuildTopoSortOrder(t *testing.T) {
@@ -186,14 +216,6 @@ func TestBuildTopoSortOrder(t *testing.T) {
 	}
 
 	result, err := Build(context.Background(), p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := []string{"a", "b", "c"}
-	for i, name := range result.StepNames {
-		if name != want[i] {
-			t.Errorf("step[%d] = %q, want %q", i, name, want[i])
-		}
-	}
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b", "c"}, result.StepNames)
 }

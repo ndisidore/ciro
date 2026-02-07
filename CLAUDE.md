@@ -1,3 +1,5 @@
+# CLAUDE
+
 This document provides guidelines for maintaining high-quality Go code. These rules MUST be followed by all AI coding agents and contributors.
 
 ## Your Core Principles
@@ -22,7 +24,7 @@ If the code is not fully optimized before handing off to the user, you will be f
 
 ## Project Layout
 
-```
+```text
 cmd/ciro/        # CLI entry point
 pkg/pipeline/    # Reusable pipeline types (external consumers may import)
 pkg/parser/      # Reusable KDL parser (external consumers may import)
@@ -40,32 +42,24 @@ internal/runner  # BuildKit runner (internal only)
 - **CS-03**: **MUST** use meaningful, descriptive variable and function names.
 - **CS-04**: Follow [Effective Go](https://go.dev/doc/effective_go) and Go idioms.
 - **CS-05**: Functions with >5 parameters **MUST** use an input struct.
+- **CS-06**: Underscore prefix for unexported package-level globals (e.g. `_defaultAddr`).
 - **NEVER** use emoji, or unicode that emulates emoji (e.g. check marks, X marks). The only exception is when writing tests and testing the impact of multibyte characters.
 
 ## Logging & Observability (OBS)
 
 - **OBS-01 (MUST)** Structured logging (`slog`) with levels and consistent fields.
 - **OBS-02 (SHOULD)** Correlate logs/metrics/traces via request IDs from context.
-- **OBS-03 (MUST)** Comments within code should be concise point in time snapshots of **how** things presently work. There should be no meta-commentary about **what** changed.
-- **NEVER** log sensitive information (passwords, tokens, PII).
+- **OBS-03 (MUST)** Comments within code should be concise point-in-time snapshots of **how** things presently work. There should be no meta-commentary about **what** changed.
+- See **SEC-2** for sensitive information logging rules.
 
 ## Error Handling (ERR)
 
 - **ERR-01**: All errors **MUST** be wrapped with `fmt.Errorf("context: %w", err)`.
 - **ERR-02**: Use `errors.Is` and `errors.As` for error checking.
 - **ERR-03**: Use sentinel errors (`var ErrFoo = errors.New(...)`) for expected failure modes.
-- **ERR-04**: **NEVER** return `nil, nil`. If there's no error, return a valid value.
-- **ERR-05 (MUST)** Use sentinel errors instead of `nil, nil` returns - makes code self-explanatory.
-- **ERR-06 (MUST)** Handle errors only once: either log OR return (wrapped), never both.
-- **ERR-07 (MUST)** Don't use "failed" or "error" in error wrapping - reserve for error origin.
-- **MUST** handle errors once: log OR return, never both.
-- Error wrap messages **MUST NOT** start with "failed" or "error".
-
-## Architecture (ARCH)
-
-- **ARCH-01**: Handle errors once (log OR return, not both).
-- **ARCH-02**: Error wrap messages must not begin with "failed"/"error".
-- **ARCH-03**: Underscore prefix for unexported package-level globals (e.g. `_defaultAddr`).
+- **ERR-04 (MUST)**: **NEVER** return `nil, nil`; use sentinel errors (`var ErrFoo = errors.New(...)`) for expected failure modes.
+- **ERR-05 (MUST)** Handle errors only once: either log OR return (wrapped), never both.
+- **ERR-06 (MUST)** Don't use "failed" or "error" in error wrapping - reserve for error origin.
 
 ## Testing (T)
 
@@ -91,9 +85,8 @@ internal/runner  # BuildKit runner (internal only)
 
 ## Security
 
-- **NEVER** log sensitive information (passwords, tokens, PII).
 - **SEC-1 (MUST)** Validate inputs; set explicit I/O timeouts; prefer TLS everywhere.
-- **SEC-2 (MUST)** Never log secrets; manage secrets outside code (env/secret manager).
+- **SEC-2 (MUST)** Never log secrets (passwords, tokens, PII); manage secrets outside code (env/secret manager).
 - **SEC-3 (SHOULD)** Limit filesystem/network access by default; principle of least privilege.
 
 ## Version Control

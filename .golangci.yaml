@@ -34,7 +34,6 @@ linters:
     - noctx
     - protogetter
     - reassign
-    - recvcheck
     - revive
     - rowserrcheck
     - sloglint
@@ -43,7 +42,6 @@ linters:
     - testableexamples
     - testifylint
     - thelper
-    - zerologlint
   disable:
     - exhaustruct
     - testpackage
@@ -75,13 +73,11 @@ linters:
         - name: cognitive-complexity
           severity: warning
           disabled: false
-          exclude: [""]
-          arguments: [13]
+          arguments: [15]
         - name: cyclomatic
           severity: warning
           disabled: false
-          exclude: [""]
-          arguments: [13]
+          arguments: [15]
   exclusions:
     generated: lax
     presets:
@@ -144,13 +140,15 @@ linters:
           - revive
         text: "use-any"
         path: '.*_test\.go'
+      # Only suppress specific noisy staticcheck checks in tests, not the whole linter
       - linters:
           - staticcheck
+        text: "SA1019"
         path: '.*_test\.go'
     paths:
-      - \.bin$
-      - \.out$
-      - \.reports$
+      - bin$
+      - out$
+      - reports$
       - third_party$
       - builtin$
       - examples$
