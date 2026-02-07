@@ -1,6 +1,6 @@
 # Build artifacts
-/target/
-**/*.rs.bk
+/ciro
+/bin/
 
 # IDE
 .idea/
