@@ -19,9 +19,21 @@ type Result struct {
 	StepNames []string
 }
 
+// BuildOpts configures the LLB build process.
+type BuildOpts struct {
+	// NoCache disables BuildKit cache for all operations when true.
+	NoCache bool
+}
+
+// stepOpts holds pre-computed LLB options applied to every step.
+type stepOpts struct {
+	imgOpts []llb.ImageOption
+	runOpts []llb.RunOption
+}
+
 // Build converts a pipeline to BuildKit LLB definitions.
 // It reuses a cached topological order when available, otherwise validates first.
-func Build(ctx context.Context, p pipeline.Pipeline) (Result, error) {
+func Build(ctx context.Context, p pipeline.Pipeline, opts BuildOpts) (Result, error) {
 	order := p.TopoOrder
 	if !validOrder(order, len(p.Steps)) {
 		var err error
@@ -29,6 +41,12 @@ func Build(ctx context.Context, p pipeline.Pipeline) (Result, error) {
 		if err != nil {
 			return Result{}, fmt.Errorf("validating pipeline: %w", err)
 		}
+	}
+
+	var so stepOpts
+	if opts.NoCache {
+		so.imgOpts = append(so.imgOpts, llb.IgnoreCache)
+		so.runOpts = append(so.runOpts, llb.IgnoreCache)
 	}
 
 	result := Result{
@@ -39,7 +57,7 @@ func Build(ctx context.Context, p pipeline.Pipeline) (Result, error) {
 	states := make(map[string]llb.State, len(order))
 	for _, idx := range order {
 		step := &p.Steps[idx]
-		def, st, err := buildStep(ctx, step, states)
+		def, st, err := buildStep(ctx, step, states, so)
 		if err != nil {
 			return Result{}, fmt.Errorf("building step %q: %w", step.Name, err)
 		}
@@ -66,22 +84,27 @@ func validOrder(order []int, n int) bool {
 	return true
 }
 
-func buildStep(ctx context.Context, step *pipeline.Step, depStates map[string]llb.State) (*llb.Definition, llb.State, error) {
-	if len(step.Run) == 0 {
+func buildStep(
+	ctx context.Context,
+	step *pipeline.Step,
+	depStates map[string]llb.State,
+	opts stepOpts,
+) (*llb.Definition, llb.State, error) {
+	cmd := strings.Join(step.Run, " && ")
+	if strings.TrimSpace(cmd) == "" {
 		return nil, llb.State{}, fmt.Errorf("step %q: %w", step.Name, pipeline.ErrMissingRun)
 	}
 
-	st := llb.Image(step.Image)
+	st := llb.Image(step.Image, opts.imgOpts...)
 
 	if step.Workdir != "" {
 		st = st.Dir(step.Workdir)
 	}
 
-	cmd := strings.Join(step.Run, " && ")
-	runOpts := []llb.RunOption{
+	runOpts := append([]llb.RunOption{
 		llb.Args([]string{"/bin/sh", "-c", cmd}),
 		llb.WithCustomName(step.Name),
-	}
+	}, opts.runOpts...)
 
 	for _, dep := range step.DependsOn {
 		depSt, ok := depStates[dep]

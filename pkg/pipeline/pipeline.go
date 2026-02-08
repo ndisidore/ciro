@@ -4,6 +4,9 @@ package pipeline
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
+	"strings"
 )
 
 // Sentinel errors for pipeline validation.
@@ -11,12 +14,16 @@ var (
 	ErrEmptyPipeline  = errors.New("pipeline has no steps")
 	ErrEmptyStepName  = errors.New("step has empty name")
 	ErrDuplicateStep  = errors.New("duplicate step name")
+	ErrInvalidName    = errors.New("step name contains invalid characters")
 	ErrMissingImage   = errors.New("step missing image")
 	ErrMissingRun     = errors.New("step has no run commands")
 	ErrSelfDependency = errors.New("step depends on itself")
 	ErrUnknownDep     = errors.New("unknown dependency")
 	ErrCycleDetected  = errors.New("dependency cycle detected")
 )
+
+// _validName matches step names that are safe for use in filesystem paths.
+var _validName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // Pipeline represents a CI/CD pipeline parsed from KDL.
 type Pipeline struct {
@@ -62,22 +69,8 @@ func (p *Pipeline) Validate() ([]int, error) {
 	}
 
 	for i := range p.Steps {
-		s := &p.Steps[i]
-
-		if s.Name == "" {
-			return nil, fmt.Errorf("step at index %d: %w", i, ErrEmptyStepName)
-		}
-
-		if _, exists := g.index[s.Name]; exists {
-			return nil, fmt.Errorf("step %q: %w", s.Name, ErrDuplicateStep)
-		}
-		g.index[s.Name] = i
-
-		if s.Image == "" {
-			return nil, fmt.Errorf("step %q: %w", s.Name, ErrMissingImage)
-		}
-		if len(s.Run) == 0 {
-			return nil, fmt.Errorf("step %q: %w", s.Name, ErrMissingRun)
+		if err := validateStep(i, &p.Steps[i], &g); err != nil {
+			return nil, err
 		}
 	}
 
@@ -93,15 +86,39 @@ func (p *Pipeline) Validate() ([]int, error) {
 	return order, nil
 }
 
+// validateStep checks a single step for name, image, and run validity.
+func validateStep(idx int, s *Step, g *stepGraph) error {
+	if s.Name == "" {
+		return fmt.Errorf("step at index %d: %w", idx, ErrEmptyStepName)
+	}
+	if !_validName.MatchString(s.Name) {
+		return fmt.Errorf("step %q: %w (must match %s)", s.Name, ErrInvalidName, _validName)
+	}
+	if _, exists := g.index[s.Name]; exists {
+		return fmt.Errorf("step %q: %w", s.Name, ErrDuplicateStep)
+	}
+	g.index[s.Name] = idx
+	if s.Image == "" {
+		return fmt.Errorf("step %q: %w", s.Name, ErrMissingImage)
+	}
+	if len(s.Run) == 0 {
+		return fmt.Errorf("step %q: %w", s.Name, ErrMissingRun)
+	}
+	for _, cmd := range s.Run {
+		if strings.TrimSpace(cmd) == "" {
+			return fmt.Errorf("step %q: %w", s.Name, ErrMissingRun)
+		}
+	}
+	return nil
+}
+
 // checkSelfDeps detects steps that list themselves as a dependency.
 func checkSelfDeps(steps []Step) error {
 	for i := range steps {
-		for _, dep := range steps[i].DependsOn {
-			if dep == steps[i].Name {
-				return fmt.Errorf(
-					"step %q depends on itself: %w", steps[i].Name, ErrSelfDependency,
-				)
-			}
+		if slices.Contains(steps[i].DependsOn, steps[i].Name) {
+			return fmt.Errorf(
+				"step %q depends on itself: %w", steps[i].Name, ErrSelfDependency,
+			)
 		}
 	}
 	return nil
