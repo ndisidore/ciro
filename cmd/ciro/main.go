@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -24,11 +25,47 @@ import (
 	"github.com/ndisidore/ciro/pkg/pipeline"
 )
 
+// errResultMismatch indicates builder.Result has mismatched Definitions and StepNames lengths.
+var errResultMismatch = errors.New("builder.Result: definitions/step-names length mismatch")
+
 // errOfflineMissingImages indicates that offline mode was requested but some
 // pipeline images are not present in the BuildKit cache.
 var errOfflineMissingImages = errors.New("offline mode: images not cached")
 
+// Engine abstracts daemon lifecycle operations for testability.
+type Engine interface {
+	// EnsureRunning ensures the daemon is running at the given address, starting it if needed.
+	EnsureRunning(ctx context.Context, addr string) (string, error)
+	// Start starts the BuildKit daemon and returns its address.
+	Start(ctx context.Context) (string, error)
+	// Stop stops the BuildKit daemon.
+	Stop(ctx context.Context) error
+	// Remove removes the BuildKit daemon container.
+	Remove(ctx context.Context) error
+	// Status returns the current daemon state, or "" if not running.
+	Status(ctx context.Context) (string, error)
+}
+
+// app bundles dependencies so CLI action handlers become testable methods.
+type app struct {
+	engine  Engine
+	connect func(ctx context.Context, addr string) (runner.Solver, func() error, error)
+	parse   func(path string) (pipeline.Pipeline, error)
+	getwd   func() (string, error)
+	stdout  io.Writer
+	isTTY   bool
+}
+
 func main() {
+	a := &app{
+		engine:  daemon.NewManager(),
+		connect: defaultConnect,
+		parse:   parser.ParseFile,
+		getwd:   os.Getwd,
+		stdout:  os.Stdout,
+		isTTY:   term.IsTerminal(int(os.Stdout.Fd())) && os.Getenv("CI") == "",
+	}
+
 	cmd := &cli.Command{
 		Name:  "ciro",
 		Usage: "a container-native CI/CD pipeline runner",
@@ -37,7 +74,7 @@ func main() {
 				Name:      "validate",
 				Usage:     "validate a KDL pipeline file",
 				ArgsUsage: "<file>",
-				Action:    validateAction,
+				Action:    a.validateAction,
 			},
 			{
 				Name:      "run",
@@ -61,7 +98,7 @@ func main() {
 						Usage: "use ASCII instead of emoji in TUI output",
 					},
 				),
-				Action: runAction,
+				Action: a.runAction,
 			},
 			{
 				Name:      "pull",
@@ -73,7 +110,7 @@ func main() {
 						Usage: "use ASCII instead of emoji in TUI output",
 					},
 				),
-				Action: pullAction,
+				Action: a.pullAction,
 			},
 			{
 				Name:  "engine",
@@ -82,17 +119,17 @@ func main() {
 					{
 						Name:   "start",
 						Usage:  "start the BuildKit engine",
-						Action: engineStartAction,
+						Action: a.engineStartAction,
 					},
 					{
 						Name:   "stop",
 						Usage:  "stop the BuildKit engine",
-						Action: engineStopAction,
+						Action: a.engineStopAction,
 					},
 					{
 						Name:   "status",
 						Usage:  "show engine status",
-						Action: engineStatusAction,
+						Action: a.engineStatusAction,
 					},
 				},
 			},
@@ -107,6 +144,17 @@ func main() {
 	if err := cmd.Run(context.Background(), os.Args); err != nil {
 		os.Exit(1)
 	}
+}
+
+// defaultConnect creates a BuildKit client and returns it as a runner.Solver.
+// bkclient.New is lazy (no network I/O); timeouts are enforced
+// per-operation at Solve/ListWorkers call sites downstream.
+func defaultConnect(ctx context.Context, addr string) (runner.Solver, func() error, error) {
+	c, err := bkclient.New(ctx, addr)
+	if err != nil {
+		return nil, func() error { return nil }, fmt.Errorf("connecting to buildkitd at %s: %w", addr, err)
+	}
+	return c, c.Close, nil
 }
 
 // buildkitFlags returns the shared flag set for commands that connect to BuildKit.
@@ -129,13 +177,13 @@ func buildkitFlags() []cli.Flag {
 	}
 }
 
-func validateAction(_ context.Context, cmd *cli.Command) error {
+func (a *app) validateAction(_ context.Context, cmd *cli.Command) error {
 	path := cmd.Args().First()
 	if path == "" {
 		return errors.New("usage: ciro validate <file>")
 	}
 
-	p, err := parser.ParseFile(path)
+	p, err := a.parse(path)
 	if err != nil {
 		return fmt.Errorf("parsing %s: %w", path, err)
 	}
@@ -144,22 +192,22 @@ func validateAction(_ context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("validating %s: %w", path, err)
 	}
 
-	printPipelineSummary(p.Name, p.Steps)
+	a.printPipelineSummary(p.Name, p.Steps)
 	return nil
 }
 
-func runAction(ctx context.Context, cmd *cli.Command) error {
+func (a *app) runAction(ctx context.Context, cmd *cli.Command) error {
 	path := cmd.Args().First()
 	if path == "" {
 		return errors.New("usage: ciro run <file>")
 	}
 
-	p, err := parser.ParseFile(path)
+	p, err := a.parse(path)
 	if err != nil {
 		return fmt.Errorf("parsing %s: %w", path, err)
 	}
 
-	cwd, err := os.Getwd()
+	cwd, err := a.getwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
 	}
@@ -177,24 +225,33 @@ func runAction(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("building %s: %w", path, err)
 	}
 
+	steps, err := buildSteps(result)
+	if err != nil {
+		return fmt.Errorf("converting build result: %w", err)
+	}
+
 	if cmd.Bool("dry-run") {
-		printDryRun(p.Name, result)
+		a.printDryRun(p.Name, steps)
 		return nil
 	}
 
-	addr, err := resolveAddr(ctx, cmd)
+	addr, err := a.resolveAddr(ctx, cmd)
 	if err != nil {
 		return err
 	}
 
-	c, err := connectBuildKit(ctx, addr)
+	solver, closer, err := a.connect(ctx, addr)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = c.Close() }()
+	defer func() {
+		if err := closer(); err != nil {
+			slog.Default().DebugContext(ctx, "close connection failed", slog.String("error", err.Error()))
+		}
+	}()
 
 	if cmd.Bool("offline") {
-		if err := checkOffline(ctx, c, p, path); err != nil {
+		if err := checkOffline(ctx, solver, p, path); err != nil {
 			return err
 		}
 	}
@@ -204,14 +261,14 @@ func runAction(ctx context.Context, cmd *cli.Command) error {
 		return fmt.Errorf("opening context directory %s: %w", cwd, err)
 	}
 
-	display, err := selectDisplay(cmd.String("progress"), cmd.Bool("boring"))
+	display, err := a.selectDisplay(cmd.String("progress"), cmd.Bool("boring"))
 	if err != nil {
 		return err
 	}
 
 	return runner.Run(ctx, runner.RunInput{
-		Client: c,
-		Result: result,
+		Solver: solver,
+		Steps:  steps,
 		LocalMounts: map[string]fsutil.FS{
 			"context": contextFS,
 		},
@@ -219,77 +276,96 @@ func runAction(ctx context.Context, cmd *cli.Command) error {
 	})
 }
 
-func printDryRun(name string, result builder.Result) {
-	_, _ = fmt.Printf("Pipeline '%s' validated\n", name)
-	_, _ = fmt.Printf("  Steps: %d\n", len(result.Definitions))
-	for i, stepName := range result.StepNames {
+func (a *app) printDryRun(name string, steps []runner.Step) {
+	_, _ = fmt.Fprintf(a.stdout, "Pipeline '%s' validated\n", name)
+	_, _ = fmt.Fprintf(a.stdout, "  Steps: %d\n", len(steps))
+	for _, step := range steps {
 		ops := 0
-		if result.Definitions[i] != nil {
-			ops = len(result.Definitions[i].Def)
+		if step.Definition != nil {
+			ops = len(step.Definition.Def)
 		}
-		_, _ = fmt.Printf("    - %s (%d LLB ops)\n", stepName, ops)
+		_, _ = fmt.Fprintf(a.stdout, "    - %s (%d LLB ops)\n", step.Name, ops)
 	}
 }
 
+// buildSteps converts a builder.Result into a slice of runner.Step.
+func buildSteps(r builder.Result) ([]runner.Step, error) {
+	if len(r.Definitions) != len(r.StepNames) {
+		return nil, fmt.Errorf("%w: %d definitions, %d step names",
+			errResultMismatch, len(r.Definitions), len(r.StepNames))
+	}
+	steps := make([]runner.Step, len(r.Definitions))
+	for i := range r.Definitions {
+		steps[i] = runner.Step{
+			Name:       r.StepNames[i],
+			Definition: r.Definitions[i],
+		}
+	}
+	return steps, nil
+}
+
 // resolveAddr returns the BuildKit daemon address, starting the daemon if needed.
-func resolveAddr(ctx context.Context, cmd *cli.Command) (string, error) {
+func (a *app) resolveAddr(ctx context.Context, cmd *cli.Command) (string, error) {
 	addr := cmd.String("addr")
 	if cmd.Bool("no-daemon") {
 		return addr, nil
 	}
-	mgr := daemon.NewManager()
 	var err error
-	addr, err = mgr.EnsureRunning(ctx, addr)
+	addr, err = a.engine.EnsureRunning(ctx, addr)
 	if err != nil {
 		return "", fmt.Errorf("ensuring buildkitd: %w", err)
 	}
 	return addr, nil
 }
 
-func pullAction(ctx context.Context, cmd *cli.Command) error {
+func (a *app) pullAction(ctx context.Context, cmd *cli.Command) error {
 	path := cmd.Args().First()
 	if path == "" {
 		return errors.New("usage: ciro pull <file>")
 	}
 
-	p, err := parser.ParseFile(path)
+	p, err := a.parse(path)
 	if err != nil {
 		return fmt.Errorf("parsing %s: %w", path, err)
 	}
 
-	images := imagestore.CollectImages(p)
+	images := pipeline.CollectImages(p)
 	if len(images) == 0 {
-		_, _ = fmt.Println("No images to pull")
+		_, _ = fmt.Fprintln(a.stdout, "No images to pull")
 		return nil
 	}
 
-	addr, err := resolveAddr(ctx, cmd)
+	addr, err := a.resolveAddr(ctx, cmd)
 	if err != nil {
 		return err
 	}
 
-	c, err := connectBuildKit(ctx, addr)
+	solver, closer, err := a.connect(ctx, addr)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = c.Close() }()
+	defer func() {
+		if err := closer(); err != nil {
+			slog.Default().DebugContext(ctx, "close connection failed", slog.String("error", err.Error()))
+		}
+	}()
 
-	display, err := selectDisplay(cmd.String("progress"), cmd.Bool("boring"))
+	display, err := a.selectDisplay(cmd.String("progress"), cmd.Bool("boring"))
 	if err != nil {
 		return err
 	}
 
-	if err := imagestore.PullImages(ctx, c, images, display); err != nil {
+	if err := imagestore.PullImages(ctx, solver, images, display); err != nil {
 		return fmt.Errorf("pulling images: %w", err)
 	}
 
-	_, _ = fmt.Printf("Pulled %d image(s)\n", len(images))
+	_, _ = fmt.Fprintf(a.stdout, "Pulled %d image(s)\n", len(images))
 	return nil
 }
 
-func checkOffline(ctx context.Context, c *bkclient.Client, p pipeline.Pipeline, path string) error {
-	images := imagestore.CollectImages(p)
-	missing, err := imagestore.CheckCached(ctx, c, images)
+func checkOffline(ctx context.Context, solver runner.Solver, p pipeline.Pipeline, path string) error {
+	images := pipeline.CollectImages(p)
+	missing, err := imagestore.CheckCached(ctx, solver, images)
 	if err != nil {
 		return fmt.Errorf("checking image cache: %w", err)
 	}
@@ -303,56 +379,50 @@ func checkOffline(ctx context.Context, c *bkclient.Client, p pipeline.Pipeline, 
 	return nil
 }
 
-// connectBuildKit creates a BuildKit client.
-// bkclient.New is lazy (no network I/O); timeouts are enforced
-// per-operation at Solve/ListWorkers call sites downstream.
-func connectBuildKit(ctx context.Context, addr string) (*bkclient.Client, error) {
-	c, err := bkclient.New(ctx, addr)
-	if err != nil {
-		return nil, fmt.Errorf("connecting to buildkitd at %s: %w", addr, err)
-	}
-	return c, nil
-}
-
-func engineStartAction(ctx context.Context, _ *cli.Command) error {
-	mgr := daemon.NewManager()
-	addr, err := mgr.Start(ctx)
+func (a *app) engineStartAction(ctx context.Context, _ *cli.Command) error {
+	addr, err := a.engine.Start(ctx)
 	if err != nil {
 		return fmt.Errorf("starting engine: %w", err)
 	}
-	_, _ = fmt.Printf("BuildKit engine started at %s\n", addr)
+	_, _ = fmt.Fprintf(a.stdout, "BuildKit engine started at %s\n", addr)
 	return nil
 }
 
-func engineStopAction(ctx context.Context, _ *cli.Command) error {
-	mgr := daemon.NewManager()
-	stopErr := mgr.Stop(ctx)
-	removeErr := mgr.Remove(ctx)
+func (a *app) engineStopAction(ctx context.Context, _ *cli.Command) error {
+	stopErr := a.engine.Stop(ctx)
+	removeErr := a.engine.Remove(ctx)
 	if err := errors.Join(stopErr, removeErr); err != nil {
 		return fmt.Errorf("stopping engine: %w", err)
 	}
-	_, _ = fmt.Println("BuildKit engine stopped")
+	_, _ = fmt.Fprintln(a.stdout, "BuildKit engine stopped")
 	return nil
 }
 
-func engineStatusAction(ctx context.Context, _ *cli.Command) error {
-	mgr := daemon.NewManager()
-	state, err := mgr.Status(ctx)
+func (a *app) engineStatusAction(ctx context.Context, _ *cli.Command) error {
+	state, err := a.engine.Status(ctx)
 	if err != nil {
 		return fmt.Errorf("checking engine status: %w", err)
 	}
 	if state == "" {
-		_, _ = fmt.Println("BuildKit engine: not running")
+		_, _ = fmt.Fprintln(a.stdout, "BuildKit engine: not running")
 	} else {
-		_, _ = fmt.Printf("BuildKit engine: %s\n", state)
+		_, _ = fmt.Fprintf(a.stdout, "BuildKit engine: %s\n", state)
 	}
 	return nil
 }
 
-func selectDisplay(mode string, boring bool) (progress.Display, error) {
+func (a *app) printPipelineSummary(name string, steps []pipeline.Step) {
+	_, _ = fmt.Fprintf(a.stdout, "Pipeline '%s' is valid\n", name)
+	_, _ = fmt.Fprintf(a.stdout, "  Steps: %d\n", len(steps))
+	for _, s := range steps {
+		_, _ = fmt.Fprintf(a.stdout, "    - %s (image: %s)\n", s.Name, s.Image)
+	}
+}
+
+func (a *app) selectDisplay(mode string, boring bool) (progress.Display, error) {
 	switch mode {
 	case "auto":
-		if term.IsTerminal(int(os.Stdout.Fd())) && os.Getenv("CI") == "" {
+		if a.isTTY {
 			return &progress.TUI{Boring: boring}, nil
 		}
 		return &progress.Plain{Log: slog.Default()}, nil
@@ -362,13 +432,5 @@ func selectDisplay(mode string, boring bool) (progress.Display, error) {
 		return &progress.Quiet{}, nil
 	default:
 		return nil, fmt.Errorf("unknown progress mode %q (valid: auto, plain, quiet)", mode)
-	}
-}
-
-func printPipelineSummary(name string, steps []pipeline.Step) {
-	_, _ = fmt.Printf("Pipeline '%s' is valid\n", name)
-	_, _ = fmt.Printf("  Steps: %d\n", len(steps))
-	for _, s := range steps {
-		_, _ = fmt.Printf("    - %s (image: %s)\n", s.Name, s.Image)
 	}
 }

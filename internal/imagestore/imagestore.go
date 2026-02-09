@@ -11,27 +11,19 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ndisidore/ciro/internal/progress"
-	"github.com/ndisidore/ciro/pkg/pipeline"
 )
 
 // Solver abstracts the BuildKit Solve RPC for testability.
+//
+// Channel close contract: the status channel passed to Solve is owned by the caller
+// of Solve (e.g. pullImage, isImageCached) until the implementer closes it. Implementations
+// of Solver MUST close the provided status channel when Solve returns or completes, so that
+// consumers such as display.Run and collectVertexCachedStates do not hang.
 type Solver interface {
+	// Solve runs the LLB definition. The implementer must close statusChan when
+	// Solve returns or completes; ownership of the channel remains with the
+	// caller of Solve until it is closed.
 	Solve(ctx context.Context, def *llb.Definition, opt client.SolveOpt, statusChan chan *client.SolveStatus) (*client.SolveResponse, error)
-}
-
-// CollectImages extracts unique image references from a pipeline.
-func CollectImages(p pipeline.Pipeline) []string {
-	seen := make(map[string]struct{}, len(p.Steps))
-	images := make([]string, 0, len(p.Steps))
-	for i := range p.Steps {
-		ref := p.Steps[i].Image
-		if _, ok := seen[ref]; ok {
-			continue
-		}
-		seen[ref] = struct{}{}
-		images = append(images, ref)
-	}
-	return images
 }
 
 // PullImages pulls all images into the BuildKit cache by solving minimal LLB
