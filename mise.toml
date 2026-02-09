@@ -1,38 +1,41 @@
 [tools]
-rust = "1.93"
+go = "1.25"
+"golangci-lint" = "2.8.0"
 
 [tasks.build]
-description = "Build all crates"
-run = "cargo build"
-
-[tasks.check]
-description = "Run cargo check"
-run = "cargo check --workspace"
+description = "Build the ciro CLI binary"
+run = "mkdir -p ./bin && go build -o ./bin/ciro ./cmd/ciro"
 
 [tasks.test]
 description = "Run all tests"
-run = "cargo test --workspace"
+run = "go test -race ./..."
+
+[tasks.vet]
+description = "Run go vet"
+run = "go vet ./..."
 
 [tasks.lint]
-description = "Run clippy lints"
-run = "cargo clippy --workspace -- -D warnings"
+description = "Run golangci-lint"
+run = "golangci-lint run"
 
 [tasks.fmt]
 description = "Format code"
-run = "cargo fmt --all"
+run = "gofmt -w ."
 
 [tasks."fmt:check"]
 description = "Check formatting"
-run = "cargo fmt --all -- --check"
+run = 'test -z "$(gofmt -l .)"'
 
 [tasks.validate]
 description = "Validate a KDL pipeline file"
-run = "cargo run -p ciro-cli -- validate"
+usage = 'arg "<file>" help="KDL pipeline file"'
+run = "go run ./cmd/ciro validate ${usage_file?}"
 
 [tasks.run]
 description = "Run a KDL pipeline"
-run = "cargo run -p ciro-cli -- run"
+usage = 'arg "<file>" help="KDL pipeline file"'
+run = "go run ./cmd/ciro run ${usage_file?}"
 
 [tasks.ci]
 description = "Run all CI checks"
-depends = ["fmt:check", "lint", "test"]
+depends = ["build", "fmt:check", "vet", "lint", "test"]

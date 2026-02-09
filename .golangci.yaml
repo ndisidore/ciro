@@ -1,0 +1,190 @@
+version: "2"
+run:
+  modules-download-mode: readonly
+  issues-exit-code: 2
+  tests: true
+  allow-parallel-runners: true
+output:
+  formats:
+    text:
+      path: stdout
+      print-linter-name: true
+      print-issued-lines: true
+  path-prefix: ""
+linters:
+  enable:
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - contextcheck
+    - durationcheck
+    - errchkjson
+    - errorlint
+    - exhaustive
+    - gocheckcompilerdirectives
+    - gochecksumtype
+    - gosec
+    - gosmopolitan
+    - loggercheck
+    - makezero
+    - musttag
+    - nilerr
+    - nilnesserr
+    - noctx
+    - protogetter
+    - reassign
+    - revive
+    - rowserrcheck
+    - sloglint
+    - spancheck
+    - sqlclosecheck
+    - testableexamples
+    - testifylint
+    - thelper
+  disable:
+    - exhaustruct
+    - testpackage
+    - recvcheck
+    - usetesting
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+    sloglint:
+      kv-only: false
+      no-mixed-args: true
+      static-msg: true
+      attr-only: true
+      no-raw-keys: false
+      args-on-sep-lines: true
+    revive:
+      enable-all-rules: true
+      rules:
+        - name: line-length-limit
+          arguments: [180]
+        - name: add-constant
+          disabled: true # too many false positives
+        - name: unexported-return
+          disabled: true
+        - name: package-comments
+          disabled: true
+        - name: max-public-structs
+          disabled: true
+        - name: cognitive-complexity
+          severity: warning
+          disabled: false
+          arguments: [15]
+        - name: cyclomatic
+          severity: warning
+          disabled: false
+          arguments: [15]
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+      - legacy
+    rules:
+      # Ignore unchecked errors on stdout/stderr print calls in CLI output.
+      # These are unrecoverable in a CLI context and the codebase already
+      # uses `_, _ =` for explicit discard (ERR-05).
+      - linters:
+          - errcheck
+        text: "Error return value of .((os\\.)?std(out|err)\\..*).*|.*print(f|ln)?. is not checked"
+
+      - linters:
+          - dupl
+          - errcheck
+          - errchkjson
+          - gocyclo
+          - gosec
+        path: _test\.go
+
+      # Disable line length & cognitive-complexity for main.go files since they tend to be longer for bootstrapping
+      - path: '.*main\.go'
+        linters:
+          - revive
+        text: "function-length"
+      - path: '.*main\.go'
+        linters:
+          - revive
+        text: "cognitive-complexity"
+      # Disable line length & cognitive-complexity for test files since you may have many nested test functions
+      - path: '.*_test\.go'
+        linters:
+          - revive
+        text: "function-length"
+      - path: '.*_test\.go'
+        linters:
+          - revive
+        text: "cognitive-complexity"
+      # Disable unchecked type assertion for test files since mocks are often used
+      - path: '.*_test\.go'
+        linters:
+          - revive
+        text: "unchecked-type-assertion"
+      - path: '.*_test\.go'
+        linters:
+          - revive
+        text: "unused-parameter"
+      - linters:
+          - revive
+        text: "cyclomatic"
+        path: '.*_test\.go'
+      - linters:
+          - revive
+        text: "line-length-limit"
+        path: '.*_test\.go'
+      - linters:
+          - revive
+        text: "comment-spacings"
+        path: '.*_test\.go'
+      - linters:
+          - revive
+        text: "unused-receiver"
+        path: '.*_test\.go'
+      - linters:
+          - revive
+        text: "use-any"
+        path: '.*_test\.go'
+      # Only suppress specific noisy staticcheck checks in tests, not the whole linter
+      - linters:
+          - staticcheck
+        text: "SA1019"
+        path: '.*_test\.go'
+    paths:
+      - bin$
+      - out$
+      - reports$
+      - third_party$
+      - builtin$
+      - examples$
+      - .*/mock/.*
+issues:
+  max-issues-per-linter: 50
+  max-same-issues: 3
+  new: false
+  fix: false
+severity:
+  default: error
+  rules:
+    - linters:
+        - dupl
+      severity: info
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    gofmt:
+      rewrite-rules:
+        - pattern: "interface{}"
+          replacement: "any"
+    goimports:
+      local-prefixes:
+        - github.com/ndisidore/ciro
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
