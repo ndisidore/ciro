@@ -10,8 +10,6 @@ import (
 	"github.com/opencontainers/go-digest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/ndisidore/ciro/pkg/pipeline"
 )
 
 // fakeSolver implements the Solver interface for testing.
@@ -31,61 +29,6 @@ func (*fakeDisplay) Run(_ context.Context, _ string, ch <-chan *client.SolveStat
 		_ = s
 	}
 	return nil
-}
-
-func TestCollectImages(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		p    pipeline.Pipeline
-		want []string
-	}{
-		{
-			name: "unique images",
-			p: pipeline.Pipeline{
-				Steps: []pipeline.Step{
-					{Image: "alpine:latest"},
-					{Image: "golang:1.23"},
-					{Image: "rust:1.76"},
-				},
-			},
-			want: []string{"alpine:latest", "golang:1.23", "rust:1.76"},
-		},
-		{
-			name: "deduplicates",
-			p: pipeline.Pipeline{
-				Steps: []pipeline.Step{
-					{Image: "alpine:latest"},
-					{Image: "alpine:latest"},
-					{Image: "golang:1.23"},
-				},
-			},
-			want: []string{"alpine:latest", "golang:1.23"},
-		},
-		{
-			name: "empty pipeline",
-			p:    pipeline.Pipeline{},
-			want: []string{},
-		},
-		{
-			name: "single step",
-			p: pipeline.Pipeline{
-				Steps: []pipeline.Step{
-					{Image: "ubuntu:22.04"},
-				},
-			},
-			want: []string{"ubuntu:22.04"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := CollectImages(tt.p)
-			assert.Equal(t, tt.want, got)
-		})
-	}
 }
 
 func TestCheckCached(t *testing.T) {

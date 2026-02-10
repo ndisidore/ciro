@@ -198,3 +198,21 @@ func (g *stepGraph) topoSort() ([]int, error) {
 	}
 	return order, nil
 }
+
+// CollectImages extracts unique image references from a pipeline.
+func CollectImages(p Pipeline) []string {
+	seen := make(map[string]struct{}, len(p.Steps))
+	images := make([]string, 0, len(p.Steps))
+	for i := range p.Steps {
+		ref := p.Steps[i].Image
+		if ref == "" {
+			continue
+		}
+		if _, ok := seen[ref]; ok {
+			continue
+		}
+		seen[ref] = struct{}{}
+		images = append(images, ref)
+	}
+	return images
+}
