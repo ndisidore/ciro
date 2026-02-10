@@ -164,6 +164,29 @@ func TestRun(t *testing.T) {
 			},
 			wantSentinel: ErrDuplicateStep,
 		},
+		{
+			name: "mutual cycle",
+			input: RunInput{
+				Solver: &fakeSolver{},
+				Steps: []Step{
+					{Name: "a", Definition: def, DependsOn: []string{"b"}},
+					{Name: "b", Definition: def, DependsOn: []string{"a"}},
+				},
+				Display: &fakeDisplay{},
+			},
+			wantSentinel: ErrCycleDetected,
+		},
+		{
+			name: "self cycle",
+			input: RunInput{
+				Solver: &fakeSolver{},
+				Steps: []Step{
+					{Name: "a", Definition: def, DependsOn: []string{"a"}},
+				},
+				Display: &fakeDisplay{},
+			},
+			wantSentinel: ErrCycleDetected,
+		},
 	}
 
 	for _, tt := range tests {
@@ -371,6 +394,8 @@ func TestRun_errorCancelsOthers(t *testing.T) {
 	def, err := llb.Scratch().Marshal(context.Background())
 	require.NoError(t, err)
 
+	var cExecuted atomic.Bool
+
 	solver := &fakeSolver{solveFn: func(ctx context.Context, _ *llb.Definition, _ client.SolveOpt, ch chan *client.SolveStatus) (*client.SolveResponse, error) {
 		close(ch)
 		return &client.SolveResponse{}, nil
@@ -378,6 +403,9 @@ func TestRun_errorCancelsOthers(t *testing.T) {
 
 	// "a" completes, then "b" fails. "c" depends on "b" and should be cancelled.
 	display := &fakeDisplay{runFn: func(_ context.Context, name string, ch <-chan *client.SolveStatus) error {
+		if name == "c" {
+			cExecuted.Store(true)
+		}
 		for s := range ch {
 			_ = s
 		}
@@ -398,6 +426,47 @@ func TestRun_errorCancelsOthers(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "step b exploded")
+	assert.False(t, cExecuted.Load(), "step c should never execute when dep b fails")
+}
+
+func TestRun_depErrorPropagatesToGrandchild(t *testing.T) {
+	t.Parallel()
+
+	def, err := llb.Scratch().Marshal(context.Background())
+	require.NoError(t, err)
+
+	var cSolved atomic.Bool
+
+	solver := &fakeSolver{solveFn: func(_ context.Context, _ *llb.Definition, _ client.SolveOpt, ch chan *client.SolveStatus) (*client.SolveResponse, error) {
+		close(ch)
+		return &client.SolveResponse{}, nil
+	}}
+	display := &fakeDisplay{runFn: func(_ context.Context, name string, ch <-chan *client.SolveStatus) error {
+		if name == "c" {
+			cSolved.Store(true)
+		}
+		for s := range ch {
+			_ = s
+		}
+		if name == "a" {
+			return errors.New("step a failed")
+		}
+		return nil
+	}}
+
+	// Chain a -> b -> c. Step "a" fails; "c" should never be solved.
+	err = Run(context.Background(), RunInput{
+		Solver: solver,
+		Steps: []Step{
+			{Name: "a", Definition: def},
+			{Name: "b", Definition: def, DependsOn: []string{"a"}},
+			{Name: "c", Definition: def, DependsOn: []string{"b"}},
+		},
+		Display:     display,
+		Parallelism: 1,
+	})
+	require.Error(t, err)
+	assert.False(t, cSolved.Load(), "step c should never be solved when grandparent a fails")
 }
 
 func TestRun_nilDefinition(t *testing.T) {

@@ -14,12 +14,12 @@ func mapSlice[T, R any](s []T, fn func(T) R) []R {
 }
 
 // flatMap applies fn to each element of s, concatenating the resulting slices.
-// Returns nil when s is nil or all fn calls return empty slices.
+// Returns nil when s is nil.
 func flatMap[T, R any](s []T, fn func(T) []R) []R {
 	if s == nil {
 		return nil
 	}
-	var out []R
+	out := make([]R, 0)
 	for _, v := range s {
 		out = append(out, fn(v)...)
 	}
@@ -27,9 +27,9 @@ func flatMap[T, R any](s []T, fn func(T) []R) []R {
 }
 
 // collectUnique extracts values via fn, deduplicates them, and skips zero values.
-// Returns nil when no values are collected.
+// Returns nil when s is nil.
 func collectUnique[T any, R comparable](s []T, fn func(T) R) []R {
-	if len(s) == 0 {
+	if s == nil {
 		return nil
 	}
 	seen := make(map[R]struct{}, len(s))

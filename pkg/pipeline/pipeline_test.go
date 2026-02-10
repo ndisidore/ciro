@@ -4,15 +4,17 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMatrixCombinations(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		m    Matrix
-		want []map[string]string
+		name    string
+		m       Matrix
+		want    []map[string]string
+		wantErr error
 	}{
 		{
 			name: "single dimension",
@@ -78,7 +80,12 @@ func TestMatrixCombinations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := tt.m.Combinations()
+			got, err := tt.m.Combinations()
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"regexp"
 	"slices"
 	"strings"
@@ -49,16 +50,20 @@ type Dimension struct {
 }
 
 // Combinations returns the cartesian product of all dimensions as a slice of
-// maps. Each map maps dimension name to a single value. Returns nil for an
-// empty matrix.
-func (m Matrix) Combinations() []map[string]string {
+// maps. Each map maps dimension name to a single value. Returns (nil, nil) for
+// an empty matrix and (nil, ErrMatrixTooLarge) on integer overflow.
+func (m Matrix) Combinations() ([]map[string]string, error) {
 	if len(m.Dimensions) == 0 {
-		return nil
+		return nil, nil
 	}
-	// Count total combinations up front.
+	// Count total combinations up front, guarding against overflow.
 	total := 1
 	for i := range m.Dimensions {
-		total *= len(m.Dimensions[i].Values)
+		n := len(m.Dimensions[i].Values)
+		if n > 0 && total > math.MaxInt/n {
+			return nil, ErrMatrixTooLarge
+		}
+		total *= n
 	}
 	combos := make([]map[string]string, 0, total)
 	combos = append(combos, make(map[string]string, len(m.Dimensions)))
@@ -75,7 +80,7 @@ func (m Matrix) Combinations() []map[string]string {
 		}
 		combos = next
 	}
-	return combos
+	return combos, nil
 }
 
 // Pipeline represents a CI/CD pipeline parsed from KDL.

@@ -45,7 +45,10 @@ func expandPipeline(p Pipeline) (Pipeline, error) {
 		return Pipeline{}, err
 	}
 
-	combos := p.Matrix.Combinations()
+	combos, err := p.Matrix.Combinations()
+	if err != nil {
+		return Pipeline{}, fmt.Errorf("pipeline matrix: %w", err)
+	}
 	expanded := Pipeline{
 		Name:  p.Name,
 		Steps: make([]Step, 0, len(p.Steps)*len(combos)),
@@ -89,7 +92,10 @@ func expandSteps(p Pipeline) (Pipeline, error) {
 			return Pipeline{}, fmt.Errorf("step %q matrix: %w", step.Name, err)
 		}
 
-		combos := step.Matrix.Combinations()
+		combos, err := step.Matrix.Combinations()
+		if err != nil {
+			return Pipeline{}, fmt.Errorf("step %q matrix: %w", step.Name, err)
+		}
 		names := make([]string, 0, len(combos))
 		for _, combo := range combos {
 			variant := replicateStep(step, combo)

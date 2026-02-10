@@ -30,6 +30,9 @@ var ErrUnknownDep = errors.New("unknown dependency")
 // ErrDuplicateStep indicates two steps share the same name.
 var ErrDuplicateStep = errors.New("duplicate step name")
 
+// ErrCycleDetected indicates a dependency cycle exists among steps.
+var ErrCycleDetected = errors.New("dependency cycle detected")
+
 // Solver abstracts the BuildKit Solve RPC for testability.
 //
 // Channel close contract: the status channel passed to Solve is owned by the caller
@@ -128,7 +131,43 @@ func buildDAG(steps []Step) (map[string]*dagNode, error) {
 			}
 		}
 	}
+	if err := detectCycles(nodes); err != nil {
+		return nil, err
+	}
 	return nodes, nil
+}
+
+// detectCycles uses a 3-state DFS to find dependency cycles in the DAG.
+func detectCycles(nodes map[string]*dagNode) error {
+	const (
+		unvisited = iota
+		visiting
+		visited
+	)
+	state := make(map[string]int, len(nodes))
+	var visit func(string) error
+	visit = func(name string) error {
+		switch state[name] {
+		case visited:
+			return nil
+		case visiting:
+			return fmt.Errorf("step %q: %w", name, ErrCycleDetected)
+		}
+		state[name] = visiting
+		for _, dep := range nodes[name].step.DependsOn {
+			if err := visit(dep); err != nil {
+				return err
+			}
+		}
+		state[name] = visited
+		return nil
+	}
+	for name := range nodes {
+		if err := visit(name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // runNode waits for dependencies, acquires a semaphore slot, solves, and signals done.
@@ -139,10 +178,12 @@ func runNode(ctx context.Context, node *dagNode, nodes map[string]*dagNode, sem 
 		select {
 		case <-nodes[dep].done:
 			if nodes[dep].err != nil {
-				return fmt.Errorf("step %q: dependency %q: %w", node.step.Name, dep, nodes[dep].err)
+				node.err = fmt.Errorf("dependency %q: %w", dep, nodes[dep].err)
+				return fmt.Errorf("step %q: %w", node.step.Name, node.err)
 			}
 		case <-ctx.Done():
-			return ctx.Err()
+			node.err = ctx.Err()
+			return node.err
 		}
 	}
 
