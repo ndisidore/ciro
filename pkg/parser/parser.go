@@ -26,23 +26,23 @@ var (
 	ErrTypeMismatch      = errors.New("argument type mismatch")
 	ErrUnknownProp       = errors.New("unknown property")
 	ErrAmbiguousFile     = errors.New("contains both pipeline and fragment nodes")
+	ErrEmptyInclude      = errors.New("no pipeline or fragment node found")
+	ErrNilResolver       = errors.New("Parser.Resolver is nil")
 )
 
 // Parser converts KDL documents into validated pipeline definitions.
 type Parser struct {
 	// Resolver opens include sources during parsing. Must be non-nil before
-	// calling ParseFile.
+	// calling ParseFile or ParseString.
 	Resolver Resolver
 }
 
 // ParseFile reads and parses a KDL pipeline file at the given path.
 func (p *Parser) ParseFile(path string) (pipeline.Pipeline, error) {
-	absPath, err := filepath.Abs(path)
-	if err != nil {
-		return pipeline.Pipeline{}, fmt.Errorf("resolving %s: %w", path, err)
+	if p.Resolver == nil {
+		return pipeline.Pipeline{}, ErrNilResolver
 	}
-
-	rc, resolved, err := p.Resolver.Resolve(absPath, "")
+	rc, resolved, err := p.Resolver.Resolve(path, "")
 	if err != nil {
 		return pipeline.Pipeline{}, fmt.Errorf("opening %s: %w", path, err)
 	}
@@ -51,14 +51,20 @@ func (p *Parser) ParseFile(path string) (pipeline.Pipeline, error) {
 	return p.parse(rc, resolved)
 }
 
+// _syntheticFilename identifies in-memory content for dirOf fallback.
+const _syntheticFilename = "<string>"
+
 // ParseString parses KDL content from a string into a Pipeline.
 // Includes are resolved relative to the current working directory.
 func (p *Parser) ParseString(content string) (pipeline.Pipeline, error) {
-	return p.parse(strings.NewReader(content), "<string>")
+	return p.parse(strings.NewReader(content), _syntheticFilename)
 }
 
 // parse is the core parse entry: detects top-level pipeline node and delegates.
 func (p *Parser) parse(r io.Reader, filename string) (pipeline.Pipeline, error) {
+	if p.Resolver == nil {
+		return pipeline.Pipeline{}, ErrNilResolver
+	}
 	doc, err := parseKDL(r, filename)
 	if err != nil {
 		return pipeline.Pipeline{}, err
@@ -66,11 +72,16 @@ func (p *Parser) parse(r io.Reader, filename string) (pipeline.Pipeline, error) 
 
 	var pipelineNode *document.Node
 	for _, node := range doc.Nodes {
-		if NodeType(node.Name.ValueString()) == NodeTypePipeline {
+		switch nt := NodeType(node.Name.ValueString()); nt {
+		case NodeTypePipeline:
 			if pipelineNode != nil {
 				return pipeline.Pipeline{}, fmt.Errorf("%s: %w", filename, ErrMultiplePipelines)
 			}
 			pipelineNode = node
+		default:
+			return pipeline.Pipeline{}, fmt.Errorf(
+				"%s: %w: %q (expected pipeline)", filename, ErrUnknownNode, string(nt),
+			)
 		}
 	}
 
@@ -164,9 +175,9 @@ func parseKDL(r io.Reader, filename string) (*document.Document, error) {
 }
 
 // dirOf returns the directory portion of a file path, suitable for resolving
-// relative includes. For synthetic filenames (like "<string>"), returns ".".
+// relative includes. For synthetic filenames, returns ".".
 func dirOf(filename string) string {
-	if strings.HasPrefix(filename, "<") {
+	if filename == _syntheticFilename {
 		return "."
 	}
 	return filepath.Dir(filename)

@@ -31,14 +31,15 @@ var (
 
 // Sentinel errors for modular configuration (includes, fragments, params).
 var (
-	ErrCircularInclude = errors.New("circular include detected")
-	ErrIncludeDepth    = errors.New("include depth limit exceeded")
-	ErrMissingParam    = errors.New("missing required parameter")
-	ErrUnknownParam    = errors.New("unknown parameter")
-	ErrDuplicateParam  = errors.New("duplicate parameter name")
-	ErrDuplicateAlias  = errors.New("duplicate include alias")
-	ErrAliasCollision  = errors.New("alias collides with step name")
-	ErrInvalidConflict = errors.New("invalid on-conflict value")
+	ErrCircularInclude  = errors.New("circular include detected")
+	ErrIncludeDepth     = errors.New("include depth limit exceeded")
+	ErrMissingParam     = errors.New("missing required parameter")
+	ErrUnknownParam     = errors.New("unknown parameter")
+	ErrDuplicateParam   = errors.New("duplicate parameter name")
+	ErrDuplicateAlias   = errors.New("duplicate include alias")
+	ErrAliasCollision   = errors.New("alias collides with step name")
+	ErrInvalidConflict  = errors.New("invalid on-conflict value")
+	ErrPipelineNoParams = errors.New("pipeline does not accept parameters")
 )
 
 // ConflictStrategy determines behavior when step names collide during merge.

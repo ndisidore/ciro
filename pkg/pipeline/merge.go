@@ -105,8 +105,8 @@ func expandDeps(deps []string, aliases map[string][]string) []string {
 	seen := make(map[string]struct{}, len(deps))
 	deduped := make([]string, 0, len(deps))
 	for _, dep := range deps {
-		targets := aliases[dep]
-		if targets == nil {
+		targets, isAlias := aliases[dep]
+		if !isAlias || len(targets) == 0 {
 			targets = []string{dep}
 		}
 		for _, t := range targets {

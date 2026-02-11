@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"slices"
+	"net/url"
 	"strings"
 
 	"github.com/sblinch/kdl-go/document"
@@ -56,22 +56,30 @@ func (s *includeState) pop() {
 	delete(s.ancestorSet, last)
 }
 
-// cacheKey produces a dedup key from absolute path and sorted param values so
-// diamond includes with identical params resolve once.
+// registerAlias records an alias -> terminal steps mapping, returning
+// ErrDuplicateAlias if the alias is already registered.
+func (s *includeState) registerAlias(alias, fromFile, source string, terminals []string) error {
+	if _, exists := s.aliases[alias]; exists {
+		return fmt.Errorf(
+			"%s: include %q: alias %q: %w",
+			fromFile, source, alias, pipeline.ErrDuplicateAlias,
+		)
+	}
+	s.aliases[alias] = terminals
+	return nil
+}
+
+// cacheKey produces a dedup key from absolute path and sorted, percent-encoded
+// param values so diamond includes with identical params resolve once.
 func cacheKey(absPath string, params map[string]string) string {
 	if len(params) == 0 {
 		return absPath
 	}
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		keys = append(keys, k)
+	vals := make(url.Values, len(params))
+	for k, v := range params {
+		vals.Set(k, v)
 	}
-	slices.Sort(keys)
-	pairs := make([]string, len(keys))
-	for i, k := range keys {
-		pairs[i] = k + "=" + params[k]
-	}
-	return absPath + ":" + strings.Join(pairs, ",")
+	return absPath + "?" + vals.Encode()
 }
 
 // includeDirective holds the parsed properties of an include node.
@@ -198,6 +206,9 @@ func (p *Parser) parseFragmentNode(node *document.Node, filename string, state *
 			if err != nil {
 				return pipeline.Fragment{}, err
 			}
+			if err := checkDuplicateParam(frag.Params, pd.Name, filename, name); err != nil {
+				return pipeline.Fragment{}, err
+			}
 			frag.Params = append(frag.Params, pd)
 		case NodeTypeStep:
 			step, err := parseStep(child, filename)
@@ -248,12 +259,26 @@ func parseParamNode(node *document.Node, filename string) (pipeline.ParamDef, er
 	return pd, nil
 }
 
+// checkDuplicateParam returns ErrDuplicateParam if name already exists in defs.
+func checkDuplicateParam(defs []pipeline.ParamDef, name, filename, fragName string) error {
+	for _, existing := range defs {
+		if existing.Name == name {
+			return fmt.Errorf(
+				"%s: fragment %q: param %q: %w",
+				filename, fragName, name, pipeline.ErrDuplicateParam,
+			)
+		}
+	}
+	return nil
+}
+
 // resolveChildInclude parses an include child node and resolves it.
 func (p *Parser) resolveChildInclude(child *document.Node, filename string, state *includeState) ([]pipeline.Step, includeDirective, error) {
 	inc, err := parseIncludeNode(child, filename)
 	if err != nil {
 		return nil, includeDirective{}, err
 	}
+	// Pointer so resolveInclude can fill inc.alias from the included name.
 	steps, err := p.resolveInclude(&inc, filename, state)
 	if err != nil {
 		return nil, includeDirective{}, err
@@ -283,14 +308,9 @@ func (p *Parser) resolveInclude(inc *includeDirective, fromFile string, state *i
 		if inc.alias == "" {
 			inc.alias = cached.Name
 		}
-		if _, exists := state.aliases[inc.alias]; exists {
-			return nil, fmt.Errorf(
-				"%s: include %q: alias %q: %w",
-				fromFile, inc.source, inc.alias, pipeline.ErrDuplicateAlias,
-			)
+		if err := state.registerAlias(inc.alias, fromFile, inc.source, pipeline.TerminalSteps(cached.Steps)); err != nil {
+			return nil, err
 		}
-		terminals := pipeline.TerminalSteps(cached.Steps)
-		state.aliases[inc.alias] = terminals
 		return cached.Steps, nil
 	}
 
@@ -302,15 +322,9 @@ func (p *Parser) resolveInclude(inc *includeDirective, fromFile string, state *i
 	if inc.alias == "" {
 		inc.alias = name
 	}
-	if _, exists := state.aliases[inc.alias]; exists {
-		return nil, fmt.Errorf(
-			"%s: include %q: alias %q: %w",
-			fromFile, inc.source, inc.alias, pipeline.ErrDuplicateAlias,
-		)
+	if err := state.registerAlias(inc.alias, fromFile, inc.source, pipeline.TerminalSteps(steps)); err != nil {
+		return nil, err
 	}
-
-	terminals := pipeline.TerminalSteps(steps)
-	state.aliases[inc.alias] = terminals
 	return steps, nil
 }
 
@@ -327,8 +341,14 @@ func (p *Parser) parseIncludedFile(rc io.Reader, absPath string, params map[stri
 	for _, node := range doc.Nodes {
 		switch nt := NodeType(node.Name.ValueString()); nt {
 		case NodeTypePipeline:
+			if pipelineNode != nil {
+				return "", nil, fmt.Errorf("%s: %w: multiple %q nodes", absPath, ErrAmbiguousFile, NodeTypePipeline)
+			}
 			pipelineNode = node
 		case NodeTypeFragment:
+			if fragNode != nil {
+				return "", nil, fmt.Errorf("%s: %w: multiple %q nodes", absPath, ErrAmbiguousFile, NodeTypeFragment)
+			}
 			fragNode = node
 		default:
 			return "", nil, fmt.Errorf("%s: %w: %q (expected pipeline or fragment)", absPath, ErrUnknownNode, string(nt))
@@ -343,7 +363,7 @@ func (p *Parser) parseIncludedFile(rc io.Reader, absPath string, params map[stri
 	case pipelineNode != nil:
 		return p.includePipeline(pipelineNode, absPath, params, state)
 	default:
-		return "", nil, fmt.Errorf("%s: no pipeline or fragment node found", absPath)
+		return "", nil, fmt.Errorf("%s: %w", absPath, ErrEmptyInclude)
 	}
 }
 
@@ -387,7 +407,7 @@ func (p *Parser) includePipeline(node *document.Node, absPath string, params map
 		return "", nil, fmt.Errorf("%s: %w", absPath, err)
 	}
 	if len(params) > 0 {
-		return "", nil, fmt.Errorf("pipeline %q does not accept parameters", name)
+		return "", nil, fmt.Errorf("pipeline %q: %w", name, pipeline.ErrPipelineNoParams)
 	}
 
 	var steps []pipeline.Step
@@ -400,11 +420,18 @@ func (p *Parser) includePipeline(node *document.Node, absPath string, params map
 			}
 			steps = append(steps, step)
 		case NodeTypeMatrix:
+			dims := make([]string, len(child.Children))
+			for i, d := range child.Children {
+				dims[i] = d.Name.ValueString()
+			}
 			slog.Warn("included pipeline matrix ignored",
 				slog.String("pipeline", name),
 				slog.String("file", absPath),
+				slog.Any("dimensions", dims),
 			)
 		case NodeTypeInclude:
+			// Conflict strategy is intentionally ignored here: included
+			// pipeline steps are appended flat, not merged via groupCollector.
 			incSteps, _, err := p.resolveChildInclude(child, absPath, state)
 			if err != nil {
 				return "", nil, err

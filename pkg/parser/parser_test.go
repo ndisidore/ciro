@@ -2,7 +2,7 @@ package parser
 
 import (
 	"io"
-	"path/filepath"
+	"path"
 	"strings"
 	"testing"
 
@@ -19,10 +19,10 @@ type memResolver struct {
 
 func (m *memResolver) Resolve(source string, basePath string) (io.ReadCloser, string, error) {
 	abs := source
-	if !filepath.IsAbs(source) {
-		abs = filepath.Join(basePath, source)
+	if !path.IsAbs(source) {
+		abs = path.Join(basePath, source)
 	}
-	abs = filepath.Clean(abs)
+	abs = path.Clean(abs)
 	content, ok := m.files[abs]
 	if !ok {
 		return nil, "", &testNotFoundError{path: abs}
@@ -187,10 +187,15 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
-			name: "missing pipeline node",
+			name: "unknown top-level node",
 			input: `something "foo" {
 				image "alpine:latest"
 			}`,
+			wantErr: ErrUnknownNode,
+		},
+		{
+			name:    "empty file",
+			input:   ``,
 			wantErr: ErrNoPipeline,
 		},
 		{

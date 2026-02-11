@@ -2,7 +2,7 @@ package pipeline
 
 import (
 	"fmt"
-	"strings"
+	"slices"
 )
 
 // ValidateParams checks that all required params are provided and no unknown
@@ -53,20 +53,16 @@ func SubstituteParams(steps []Step, params map[string]string) []Step {
 	if len(params) == 0 {
 		return steps
 	}
-	combo := make(map[string]string, len(params))
-	for k, v := range params {
-		combo["param."+k] = v
-	}
 	return mapSlice(steps, func(s Step) Step {
-		return substituteStepVars(s, combo)
+		return substituteStepVars(s, params, "param.")
 	})
 }
 
-// substituteStepVars applies ${prefix.key} substitution to all string fields
-// of a step. This reuses the same pattern as replicateStep but with an
-// arbitrary namespace prefix baked into the combo keys.
-func substituteStepVars(s Step, combo map[string]string) Step {
-	sub := func(v string) string { return substituteNamespacedVars(v, combo) }
+// substituteStepVars applies ${prefix.key} substitution to step fields
+// (Image, Workdir, Platform, Run, Mounts, Caches). Name and DependsOn are
+// copied without substitution.
+func substituteStepVars(s Step, combo map[string]string, prefix string) Step {
+	sub := func(v string) string { return substituteVars(v, combo, prefix) }
 	return Step{
 		Name:      s.Name,
 		Image:     sub(s.Image),
@@ -74,7 +70,7 @@ func substituteStepVars(s Step, combo map[string]string) Step {
 		Platform:  sub(s.Platform),
 		Matrix:    s.Matrix,
 		Run:       mapSlice(s.Run, sub),
-		DependsOn: mapSlice(s.DependsOn, func(d string) string { return d }),
+		DependsOn: slices.Clone(s.DependsOn),
 		Mounts: mapSlice(s.Mounts, func(m Mount) Mount {
 			return Mount{Source: sub(m.Source), Target: sub(m.Target), ReadOnly: m.ReadOnly}
 		}),
@@ -82,17 +78,4 @@ func substituteStepVars(s Step, combo map[string]string) Step {
 			return Cache{ID: sub(c.ID), Target: sub(c.Target)}
 		}),
 	}
-}
-
-// substituteNamespacedVars replaces ${key} placeholders where keys already
-// include their namespace prefix (e.g. "param.go-version").
-func substituteNamespacedVars(s string, combo map[string]string) string {
-	if len(combo) == 0 {
-		return s
-	}
-	pairs := make([]string, 0, len(combo)*2)
-	for k, v := range combo {
-		pairs = append(pairs, "${"+k+"}", v)
-	}
-	return strings.NewReplacer(pairs...).Replace(s)
 }
