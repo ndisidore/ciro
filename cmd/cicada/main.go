@@ -142,6 +142,14 @@ func main() {
 						Name:  "expose-deps",
 						Usage: "mount full dependency root filesystems at /deps/{name}",
 					},
+					&cli.StringFlag{
+						Name:  "start-at",
+						Usage: "run from this step forward (includes downstream dependents)",
+					},
+					&cli.StringFlag{
+						Name:  "stop-after",
+						Usage: "run up to and including this step (excludes downstream)",
+					},
 					&cli.StringSliceFlag{
 						Name:  "cache-to",
 						Usage: "cache export destination (e.g. type=registry,ref=ghcr.io/user/cache)",
@@ -291,6 +299,16 @@ func (a *app) runAction(ctx context.Context, cmd *cli.Command) error {
 	if err != nil {
 		return fmt.Errorf("parsing %s: %w", path, err)
 	}
+
+	filterOpts := pipeline.FilterOpts{
+		StartAt:   cmd.String("start-at"),
+		StopAfter: cmd.String("stop-after"),
+	}
+	p.Steps, err = pipeline.FilterSteps(p.Steps, filterOpts)
+	if err != nil {
+		return fmt.Errorf("filtering steps: %w", err)
+	}
+	p.TopoOrder = nil
 
 	cwd, err := a.getwd()
 	if err != nil {
