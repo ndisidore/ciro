@@ -13,7 +13,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 
-	"github.com/ndisidore/cicada/internal/builder"
 	"github.com/ndisidore/cicada/internal/cache"
 	"github.com/ndisidore/cicada/internal/progress"
 	"github.com/ndisidore/cicada/pkg/pipeline"
@@ -27,15 +26,6 @@ var ErrNilDisplay = errors.New("display must not be nil")
 
 // ErrNilDefinition indicates that an LLB Definition is unexpectedly nil.
 var ErrNilDefinition = errors.New("definition must not be nil")
-
-// ErrUnknownDep indicates a job depends on a name not in the job list.
-var ErrUnknownDep = errors.New("unknown dependency")
-
-// ErrDuplicateJob indicates two jobs share the same name.
-var ErrDuplicateJob = errors.New("duplicate job name")
-
-// ErrCycleDetected indicates a dependency cycle exists among jobs.
-var ErrCycleDetected = errors.New("dependency cycle detected")
 
 // Solver abstracts the BuildKit Solve RPC for testability.
 //
@@ -57,6 +47,15 @@ type Job struct {
 	DependsOn  []string
 }
 
+// Export pairs an LLB definition containing exported files with the
+// target host path for the local exporter.
+type Export struct {
+	Definition *llb.Definition
+	JobName    string
+	Local      string // host path target
+	Dir        bool   // true when exporting a directory (trailing / on container path)
+}
+
 // RunInput holds parameters for executing a pipeline against BuildKit.
 type RunInput struct {
 	// Solver is the BuildKit API client used to solve LLB definitions.
@@ -70,7 +69,7 @@ type RunInput struct {
 	// Parallelism limits concurrent job execution. 0 means unlimited.
 	Parallelism int
 	// Exports contains artifacts to export to the host after all jobs complete.
-	Exports []builder.LocalExport
+	Exports []Export
 	// CacheExports configures cache export destinations (e.g. registry, gha, local).
 	CacheExports []client.CacheOptionsEntry
 	// CacheImports configures cache import sources.
@@ -161,7 +160,7 @@ func buildDAG(jobs []Job) (map[string]*dagNode, error) {
 	nodes := make(map[string]*dagNode, len(jobs))
 	for i := range jobs {
 		if _, exists := nodes[jobs[i].Name]; exists {
-			return nil, fmt.Errorf("job %q: %w", jobs[i].Name, ErrDuplicateJob)
+			return nil, fmt.Errorf("job %q: %w", jobs[i].Name, pipeline.ErrDuplicateJob)
 		}
 		nodes[jobs[i].Name] = &dagNode{
 			job:  jobs[i],
@@ -171,7 +170,7 @@ func buildDAG(jobs []Job) (map[string]*dagNode, error) {
 	for i := range jobs {
 		for _, dep := range jobs[i].DependsOn {
 			if _, ok := nodes[dep]; !ok {
-				return nil, fmt.Errorf("job %q depends on %q: %w", jobs[i].Name, dep, ErrUnknownDep)
+				return nil, fmt.Errorf("job %q depends on %q: %w", jobs[i].Name, dep, pipeline.ErrUnknownDep)
 			}
 		}
 	}
@@ -195,7 +194,7 @@ func detectCycles(nodes map[string]*dagNode) error {
 		case visited:
 			return nil
 		case visiting:
-			return fmt.Errorf("job %q: %w", name, ErrCycleDetected)
+			return fmt.Errorf("job %q: %w", name, pipeline.ErrCycleDetected)
 		}
 		state[name] = visiting
 		for _, dep := range nodes[name].job.DependsOn {
@@ -276,8 +275,7 @@ func solveJob(
 	g.Go(func() error {
 		displayCh := teeStatus(ctx, ch, cfg.collector, name)
 		err := display.Run(ctx, name, displayCh)
-		for range displayCh { //nolint:revive // drain so Solve can close ch
-		}
+		drainChannel(displayCh)
 		if err != nil {
 			return fmt.Errorf("displaying progress: %w", err)
 		}
@@ -289,7 +287,7 @@ func solveJob(
 
 // solveExport solves an export LLB definition using the local exporter to
 // write files to the host filesystem.
-func solveExport(ctx context.Context, s Solver, display progress.Display, exp builder.LocalExport, cfg solveConfig) error {
+func solveExport(ctx context.Context, s Solver, display progress.Display, exp Export, cfg solveConfig) error {
 	if exp.Definition == nil {
 		return ErrNilDefinition
 	}
@@ -323,8 +321,7 @@ func solveExport(ctx context.Context, s Solver, display progress.Display, exp bu
 	g.Go(func() error {
 		displayCh := teeStatus(ctx, ch, cfg.collector, displayName)
 		err := display.Run(ctx, displayName, displayCh)
-		for range displayCh { //nolint:revive // drain so Solve can close ch
-		}
+		drainChannel(displayCh)
 		if err != nil {
 			return fmt.Errorf("displaying export progress: %w", err)
 		}
@@ -334,8 +331,8 @@ func solveExport(ctx context.Context, s Solver, display progress.Display, exp bu
 	return g.Wait()
 }
 
-// drainStatus discards remaining items from ch so the sender is not blocked.
-func drainStatus(ch <-chan *client.SolveStatus) {
+// drainChannel discards remaining items from ch so the sender is not blocked.
+func drainChannel(ch <-chan *client.SolveStatus) {
 	//nolint:revive // intentionally discarding remaining events
 	for range ch {
 	}
@@ -351,7 +348,7 @@ func teeStatus(ctx context.Context, src <-chan *client.SolveStatus, collector *c
 	out := make(chan *client.SolveStatus)
 	go func() {
 		defer close(out)
-		defer drainStatus(src)
+		defer drainChannel(src)
 		for {
 			select {
 			case status, ok := <-src:

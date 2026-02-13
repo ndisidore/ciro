@@ -19,7 +19,7 @@ func flatMap[T, R any](s []T, fn func(T) []R) []R {
 	if s == nil {
 		return nil
 	}
-	out := make([]R, 0)
+	out := make([]R, 0, len(s))
 	for _, v := range s {
 		out = append(out, fn(v)...)
 	}
@@ -34,7 +34,7 @@ func collectUnique[T any, R comparable](s []T, fn func(T) R) []R {
 	}
 	seen := make(map[R]struct{}, len(s))
 	var zero R
-	var out []R
+	out := make([]R, 0, len(s))
 	for _, v := range s {
 		r := fn(v)
 		if r == zero {

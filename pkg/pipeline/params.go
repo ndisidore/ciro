@@ -1,9 +1,6 @@
 package pipeline
 
-import (
-	"fmt"
-	"slices"
-)
+import "fmt"
 
 // ValidateParams checks that all required params are provided and no unknown
 // params are passed.
@@ -47,8 +44,6 @@ func ResolveParams(defs []ParamDef, provided map[string]string) (map[string]stri
 }
 
 // SubstituteParams replaces ${param.*} placeholders in all job and step fields.
-// Uses strings.NewReplacer for single-pass substitution, matching the
-// approach used by substituteVars for ${matrix.*}.
 func SubstituteParams(jobs []Job, params map[string]string) []Job {
 	if len(params) == 0 {
 		return jobs
@@ -58,82 +53,84 @@ func SubstituteParams(jobs []Job, params map[string]string) []Job {
 	})
 }
 
-// substituteJobVars applies ${prefix.key} substitution to job fields
-// (Image, Workdir, Platform, Mounts, Caches, Env values, Exports, Artifacts)
-// and recursively substitutes in each step's fields. Name and DependsOn are
-// copied without substitution.
+// substituteJobVars applies ${prefix.key} substitution to all string fields
+// of a job and its steps. Returns a deep copy with substitutions applied.
 func substituteJobVars(j Job, combo map[string]string, prefix string) Job {
 	sub := func(v string) string { return substituteVars(v, combo, prefix) }
-	return Job{
-		Name:      j.Name,
-		Image:     sub(j.Image),
-		Workdir:   sub(j.Workdir),
-		Platform:  sub(j.Platform),
-		DependsOn: slices.Clone(j.DependsOn),
-		Matrix:    substituteMatrix(j.Matrix, sub),
-		NoCache:   j.NoCache,
-		Mounts: mapSlice(j.Mounts, func(m Mount) Mount {
-			return Mount{Source: sub(m.Source), Target: sub(m.Target), ReadOnly: m.ReadOnly}
-		}),
-		Caches: mapSlice(j.Caches, func(c Cache) Cache {
-			return Cache{ID: sub(c.ID), Target: sub(c.Target)}
-		}),
-		Env: mapSlice(j.Env, func(e EnvVar) EnvVar {
-			return EnvVar{Key: e.Key, Value: sub(e.Value)}
-		}),
-		Exports: mapSlice(j.Exports, func(e Export) Export {
-			return Export{Path: sub(e.Path), Local: sub(e.Local)}
-		}),
-		Artifacts: mapSlice(j.Artifacts, func(a Artifact) Artifact {
-			return Artifact{From: a.From, Source: sub(a.Source), Target: sub(a.Target)}
-		}),
-		Steps: mapSlice(j.Steps, func(s Step) Step {
-			return substituteStepVars(s, combo, prefix)
-		}),
+	c := j.Clone()
+	c.Image = sub(c.Image)
+	c.Workdir = sub(c.Workdir)
+	c.Platform = sub(c.Platform)
+	substituteMatrixValues(c.Matrix, sub)
+	substituteMounts(c.Mounts, sub)
+	substituteCaches(c.Caches, sub)
+	substituteEnvValues(c.Env, sub)
+	substituteExports(c.Exports, sub)
+	substituteArtifacts(c.Artifacts, sub)
+	for i := range c.Steps {
+		substituteStepFields(&c.Steps[i], sub)
 	}
+	return c
 }
 
-// substituteMatrix applies a substitution function to dimension values in a
-// matrix, returning nil for nil input. Dimension names are identifiers and
-// are copied unchanged.
-func substituteMatrix(m *Matrix, sub func(string) string) *Matrix {
-	if m == nil {
-		return nil
+// substituteStepFields applies in-place substitution to all string fields of
+// a step. The step's slice fields must already be cloned (via Job.Clone).
+func substituteStepFields(s *Step, sub func(string) string) {
+	for i := range s.Run {
+		s.Run[i] = sub(s.Run[i])
 	}
-	dims := make([]Dimension, len(m.Dimensions))
-	for i, d := range m.Dimensions {
-		dims[i] = Dimension{
-			Name:   d.Name,
-			Values: mapSlice(d.Values, sub),
+	s.Workdir = sub(s.Workdir)
+	substituteMounts(s.Mounts, sub)
+	substituteCaches(s.Caches, sub)
+	substituteEnvValues(s.Env, sub)
+	substituteExports(s.Exports, sub)
+	substituteArtifacts(s.Artifacts, sub)
+}
+
+// substituteMatrixValues applies in-place substitution to all dimension values.
+func substituteMatrixValues(m *Matrix, sub func(string) string) {
+	if m == nil {
+		return
+	}
+	for i := range m.Dimensions {
+		for j := range m.Dimensions[i].Values {
+			m.Dimensions[i].Values[j] = sub(m.Dimensions[i].Values[j])
 		}
 	}
-	return &Matrix{Dimensions: dims}
 }
 
-// substituteStepVars applies ${prefix.key} substitution to step fields
-// (Run, Workdir, Mounts, Caches, Env values, Exports, Artifacts).
-// Name is copied without substitution.
-func substituteStepVars(s Step, combo map[string]string, prefix string) Step {
-	sub := func(v string) string { return substituteVars(v, combo, prefix) }
-	return Step{
-		Name:    s.Name,
-		Run:     mapSlice(s.Run, sub),
-		Workdir: sub(s.Workdir),
-		NoCache: s.NoCache,
-		Env: mapSlice(s.Env, func(e EnvVar) EnvVar {
-			return EnvVar{Key: e.Key, Value: sub(e.Value)}
-		}),
-		Mounts: mapSlice(s.Mounts, func(m Mount) Mount {
-			return Mount{Source: sub(m.Source), Target: sub(m.Target), ReadOnly: m.ReadOnly}
-		}),
-		Caches: mapSlice(s.Caches, func(c Cache) Cache {
-			return Cache{ID: sub(c.ID), Target: sub(c.Target)}
-		}),
-		Exports: mapSlice(s.Exports, func(e Export) Export {
-			return Export{Path: sub(e.Path), Local: sub(e.Local)}
-		}),
-		Artifacts: mapSlice(s.Artifacts, func(a Artifact) Artifact {
-			return Artifact{From: a.From, Source: sub(a.Source), Target: sub(a.Target)}
-		}),
+// In-place substitution helpers for shared slice field types.
+
+func substituteMounts(mounts []Mount, sub func(string) string) {
+	for i := range mounts {
+		mounts[i].Source = sub(mounts[i].Source)
+		mounts[i].Target = sub(mounts[i].Target)
+	}
+}
+
+func substituteCaches(caches []Cache, sub func(string) string) {
+	for i := range caches {
+		caches[i].ID = sub(caches[i].ID)
+		caches[i].Target = sub(caches[i].Target)
+	}
+}
+
+func substituteEnvValues(envs []EnvVar, sub func(string) string) {
+	for i := range envs {
+		envs[i].Value = sub(envs[i].Value)
+	}
+}
+
+func substituteExports(exports []Export, sub func(string) string) {
+	for i := range exports {
+		exports[i].Path = sub(exports[i].Path)
+		exports[i].Local = sub(exports[i].Local)
+	}
+}
+
+func substituteArtifacts(artifacts []Artifact, sub func(string) string) {
+	for i := range artifacts {
+		artifacts[i].Source = sub(artifacts[i].Source)
+		artifacts[i].Target = sub(artifacts[i].Target)
 	}
 }

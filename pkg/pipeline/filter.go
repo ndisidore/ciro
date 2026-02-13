@@ -107,22 +107,12 @@ func validateTarget(t filterTarget, nameSet map[string]struct{}, jobByName map[s
 
 // jobHasStep reports whether j contains a step with the given name.
 func jobHasStep(j *Job, step string) bool {
-	for i := range j.Steps {
-		if j.Steps[i].Name == step {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(j.Steps, func(s Step) bool { return s.Name == step })
 }
 
 // stepIndex returns the index of the named step, or -1 if not found.
 func stepIndex(steps []Step, name string) int {
-	for i := range steps {
-		if steps[i].Name == name {
-			return i
-		}
-	}
-	return -1
+	return slices.IndexFunc(steps, func(s Step) bool { return s.Name == name })
 }
 
 // FilterJobs selects a subgraph of jobs based on start-at / stop-after
@@ -176,15 +166,14 @@ func FilterJobs(jobs []Job, opts FilterOpts) ([]Job, error) {
 		addTransitiveDeps(name, adj.dependencies, fullSet)
 	}
 
-	// Filter jobs preserving original order; clone Steps to avoid aliasing
-	// the input slice. Strip exports from dep-only jobs.
+	// Filter jobs preserving original order; clone to avoid aliasing the
+	// input. Strip exports from dep-only jobs.
 	filtered := make([]Job, 0, len(fullSet))
 	for i := range jobs {
 		if _, ok := fullSet[jobs[i].Name]; !ok {
 			continue
 		}
-		j := jobs[i]
-		j.Steps = slices.Clone(j.Steps)
+		j := jobs[i].Clone()
 		if _, inWindow := executionWindow[j.Name]; !inWindow {
 			j.Exports = nil
 			for si := range j.Steps {

@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ndisidore/cicada/internal/builder"
 	"github.com/ndisidore/cicada/internal/cache"
 	"github.com/ndisidore/cicada/pkg/pipeline"
 )
@@ -160,7 +159,7 @@ func TestRun(t *testing.T) {
 				Jobs:    []Job{{Name: "a", Definition: def, DependsOn: []string{"nonexistent"}}},
 				Display: &fakeDisplay{},
 			},
-			wantSentinel: ErrUnknownDep,
+			wantSentinel: pipeline.ErrUnknownDep,
 		},
 		{
 			name: "duplicate job name",
@@ -172,7 +171,7 @@ func TestRun(t *testing.T) {
 				},
 				Display: &fakeDisplay{},
 			},
-			wantSentinel: ErrDuplicateJob,
+			wantSentinel: pipeline.ErrDuplicateJob,
 		},
 		{
 			name: "mutual cycle",
@@ -184,7 +183,7 @@ func TestRun(t *testing.T) {
 				},
 				Display: &fakeDisplay{},
 			},
-			wantSentinel: ErrCycleDetected,
+			wantSentinel: pipeline.ErrCycleDetected,
 		},
 		{
 			name: "self cycle",
@@ -195,7 +194,7 @@ func TestRun(t *testing.T) {
 				},
 				Display: &fakeDisplay{},
 			},
-			wantSentinel: ErrCycleDetected,
+			wantSentinel: pipeline.ErrCycleDetected,
 		},
 		{
 			name: "nil definition returns error",
@@ -662,7 +661,7 @@ func TestRun_exports(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		exports       []builder.LocalExport
+		exports       []Export
 		solver        *fakeSolver
 		display       *fakeDisplay
 		wantErr       string
@@ -672,7 +671,7 @@ func TestRun_exports(t *testing.T) {
 	}{
 		{
 			name: "export solves with local exporter",
-			exports: []builder.LocalExport{
+			exports: []Export{
 				{Definition: def, JobName: "build", Local: "/tmp/out/myapp"},
 			},
 			solver: &fakeSolver{solveFn: func(_ context.Context, _ *llb.Definition, _ client.SolveOpt, ch chan *client.SolveStatus) (*client.SolveResponse, error) {
@@ -685,7 +684,7 @@ func TestRun_exports(t *testing.T) {
 		},
 		{
 			name: "directory export uses Local as OutputDir",
-			exports: []builder.LocalExport{
+			exports: []Export{
 				{Definition: def, JobName: "build", Local: "/tmp/out/dist", Dir: true},
 			},
 			solver: &fakeSolver{solveFn: func(_ context.Context, _ *llb.Definition, _ client.SolveOpt, ch chan *client.SolveStatus) (*client.SolveResponse, error) {
@@ -698,7 +697,7 @@ func TestRun_exports(t *testing.T) {
 		},
 		{
 			name: "export solve error wraps job and path",
-			exports: []builder.LocalExport{
+			exports: []Export{
 				{Definition: def, JobName: "compile", Local: "/tmp/bin/app"},
 			},
 			solver: &fakeSolver{solveFn: func(_ context.Context, _ *llb.Definition, _ client.SolveOpt, ch chan *client.SolveStatus) (*client.SolveResponse, error) {
@@ -710,7 +709,7 @@ func TestRun_exports(t *testing.T) {
 		},
 		{
 			name: "export display error propagates",
-			exports: []builder.LocalExport{
+			exports: []Export{
 				{Definition: def, JobName: "build", Local: "/tmp/out/myapp"},
 			},
 			solver: &fakeSolver{solveFn: func(_ context.Context, _ *llb.Definition, _ client.SolveOpt, ch chan *client.SolveStatus) (*client.SolveResponse, error) {
@@ -730,7 +729,7 @@ func TestRun_exports(t *testing.T) {
 		},
 		{
 			name: "nil export definition returns error",
-			exports: []builder.LocalExport{
+			exports: []Export{
 				{Definition: nil, JobName: "bad", Local: "/tmp/out/x"},
 			},
 			solver:       &fakeSolver{},
@@ -739,7 +738,7 @@ func TestRun_exports(t *testing.T) {
 		},
 		{
 			name: "empty export local returns error",
-			exports: []builder.LocalExport{
+			exports: []Export{
 				{Definition: def, JobName: "bad", Local: ""},
 			},
 			solver:       &fakeSolver{},
@@ -821,7 +820,7 @@ func TestRun_exports(t *testing.T) {
 				Solver:  solver,
 				Jobs:    []Job{{Name: "build", Definition: def}},
 				Display: &fakeDisplay{},
-				Exports: []builder.LocalExport{
+				Exports: []Export{
 					{Definition: def, JobName: "build", Local: "/tmp/a"},
 					{Definition: def, JobName: "build", Local: "/tmp/b"},
 					{Definition: def, JobName: "build", Local: "/tmp/c"},
@@ -860,7 +859,7 @@ func TestRun_exports(t *testing.T) {
 				Solver:  solver,
 				Jobs:    []Job{{Name: "build", Definition: def}},
 				Display: &fakeDisplay{},
-				Exports: []builder.LocalExport{
+				Exports: []Export{
 					{Definition: def, JobName: "build", Local: "/tmp/a"},
 					{Definition: def, JobName: "build", Local: "/tmp/b"},
 				},

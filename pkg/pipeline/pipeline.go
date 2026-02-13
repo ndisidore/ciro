@@ -427,26 +427,10 @@ func checkSelfDeps(jobs []Job) error {
 	return nil
 }
 
-// TopoSort returns job indices in topological order (dependencies first).
-// It uses a 3-state DFS and returns ErrUnknownDep for missing dependencies
-// or ErrCycleDetected when a dependency cycle is found.
-func (p *Pipeline) TopoSort() ([]int, error) {
-	g := newJobGraph(p.Jobs)
-	return g.topoSort()
-}
-
 // jobGraph provides indexed graph operations over a job slice.
 type jobGraph struct {
 	jobs  []Job
 	index map[string]int
-}
-
-func newJobGraph(jobs []Job) jobGraph {
-	idx := make(map[string]int, len(jobs))
-	for i := range jobs {
-		idx[jobs[i].Name] = i
-	}
-	return jobGraph{jobs: jobs, index: idx}
 }
 
 // resolveDep looks up a dependency by name, returning a clear error for unknown deps.
@@ -504,44 +488,26 @@ func (g *jobGraph) topoSort() ([]int, error) {
 // ApplyDefaults merges pipeline-wide defaults into each job. Image and workdir
 // are filled when the job leaves them empty. Mounts are prepended (defaults
 // first, job-specific after). Env is merged with job values winning on conflict.
-// Top-level slice fields and the Matrix pointer are cloned to avoid aliasing
-// the input. Step-level inner slices (Run, Env, Mounts, etc.) remain
-// shallow-copied; callers must not mutate them on the returned jobs.
 func ApplyDefaults(jobs []Job, defaults *Defaults) []Job {
 	if defaults == nil {
-		return slices.Clone(jobs)
+		return mapSlice(jobs, func(j Job) Job { return j.Clone() })
 	}
-	result := make([]Job, len(jobs))
-	for i := range jobs {
-		result[i] = jobs[i]
-		result[i].Steps = slices.Clone(jobs[i].Steps)
-		result[i].DependsOn = slices.Clone(jobs[i].DependsOn)
-		result[i].Caches = slices.Clone(jobs[i].Caches)
-		result[i].Exports = slices.Clone(jobs[i].Exports)
-		result[i].Artifacts = slices.Clone(jobs[i].Artifacts)
-		if jobs[i].Matrix != nil {
-			m := *jobs[i].Matrix
-			m.Dimensions = slices.Clone(m.Dimensions)
-			result[i].Matrix = &m
+	return mapSlice(jobs, func(j Job) Job {
+		c := j.Clone()
+		if c.Image == "" {
+			c.Image = defaults.Image
 		}
-		if result[i].Image == "" {
-			result[i].Image = defaults.Image
-		}
-		if result[i].Workdir == "" {
-			result[i].Workdir = defaults.Workdir
+		if c.Workdir == "" {
+			c.Workdir = defaults.Workdir
 		}
 		if len(defaults.Mounts) > 0 {
-			result[i].Mounts = append(slices.Clone(defaults.Mounts), result[i].Mounts...)
-		} else {
-			result[i].Mounts = slices.Clone(jobs[i].Mounts)
+			c.Mounts = append(slices.Clone(defaults.Mounts), c.Mounts...)
 		}
 		if len(defaults.Env) > 0 {
-			result[i].Env = mergeEnv(defaults.Env, result[i].Env)
-		} else {
-			result[i].Env = slices.Clone(jobs[i].Env)
+			c.Env = mergeEnv(defaults.Env, c.Env)
 		}
-	}
-	return result
+		return c
+	})
 }
 
 // mergeEnv combines base and override env vars. Override values win on key

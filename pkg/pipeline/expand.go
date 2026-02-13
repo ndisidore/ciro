@@ -48,12 +48,12 @@ func expandPipeline(p Pipeline) (Pipeline, error) {
 	if err != nil {
 		return Pipeline{}, fmt.Errorf("pipeline matrix: %w", err)
 	}
-	expanded := Pipeline{
-		Name:     p.Name,
-		Env:      p.Env,
-		Defaults: p.Defaults,
-		Jobs:     make([]Job, 0, len(p.Jobs)*len(combos)),
-	}
+	savedJobs := p.Jobs
+	p.Jobs = nil
+	expanded := p.Clone()
+	p.Jobs = savedJobs
+	expanded.Matrix = nil
+	expanded.Jobs = make([]Job, 0, len(savedJobs)*len(combos))
 
 	for _, combo := range combos {
 		for i := range p.Jobs {
@@ -136,12 +136,12 @@ func expandJobs(p Pipeline) (Pipeline, error) {
 		}
 	}
 
-	return Pipeline{
-		Name:     p.Name,
-		Env:      p.Env,
-		Defaults: p.Defaults,
-		Jobs:     expanded,
-	}, nil
+	savedJobs := p.Jobs
+	p.Jobs = nil
+	result := p.Clone()
+	p.Jobs = savedJobs
+	result.Jobs = expanded
+	return result, nil
 }
 
 // _maxMatrixCombinations caps the cartesian product to prevent accidental

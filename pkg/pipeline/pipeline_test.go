@@ -724,13 +724,17 @@ func TestApplyDefaults(t *testing.T) {
 		assert.Nil(t, result[0].Matrix)
 	})
 
-	t.Run("nil defaults clones slice", func(t *testing.T) {
+	t.Run("nil defaults deep-clones jobs", func(t *testing.T) {
 		t.Parallel()
 
 		input := []Job{{
-			Name:  "test",
-			Image: "alpine",
-			Steps: []Step{{Name: "test", Run: []string{"echo hi"}}},
+			Name:      "test",
+			Image:     "alpine",
+			DependsOn: []string{"build"},
+			Steps:     []Step{{Name: "test", Run: []string{"echo hi"}}},
+			Matrix: &Matrix{Dimensions: []Dimension{
+				{Name: "go", Values: []string{"1.22"}},
+			}},
 		}}
 
 		result := ApplyDefaults(input, nil)
@@ -739,7 +743,18 @@ func TestApplyDefaults(t *testing.T) {
 
 		result[0].Name = "mutated"
 		assert.Equal(t, "test", input[0].Name,
-			"mutating result must not affect input when defaults is nil")
+			"mutating result scalar must not affect input")
+
+		result[0].Steps[0].Run[0] = "CHANGED"
+		assert.Equal(t, "echo hi", input[0].Steps[0].Run[0],
+			"mutating result Steps must not affect input")
+
+		result[0].DependsOn[0] = "CHANGED"
+		assert.Equal(t, "build", input[0].DependsOn[0],
+			"mutating result DependsOn must not affect input")
+
+		assert.NotSame(t, input[0].Matrix, result[0].Matrix,
+			"Matrix pointer must not alias the input")
 	})
 
 	t.Run("env merge job wins on conflict", func(t *testing.T) {
