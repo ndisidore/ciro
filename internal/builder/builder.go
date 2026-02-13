@@ -3,6 +3,7 @@ package builder
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -12,6 +13,9 @@ import (
 
 	"github.com/ndisidore/cicada/pkg/pipeline"
 )
+
+// errMissingDepState indicates a dependency's LLB state was not found during build.
+var errMissingDepState = errors.New("missing dependency state")
 
 // LocalExport pairs an LLB definition containing exported files with the
 // target host path for the local exporter.
@@ -210,7 +214,7 @@ func buildJob(
 		depSt, ok := depStates[art.From]
 		if !ok {
 			return nil, llb.State{}, fmt.Errorf(
-				"job %q: missing dependency state for artifact from %q", job.Name, art.From,
+				"artifact from %q: %w", art.From, errMissingDepState,
 			)
 		}
 		st = st.File(llb.Copy(depSt, art.Source, art.Target))
@@ -250,8 +254,8 @@ func buildJob(
 			depSt, ok := depStates[art.From]
 			if !ok {
 				return nil, llb.State{}, fmt.Errorf(
-					"job %q step %q: missing dependency state for artifact from %q",
-					job.Name, step.Name, art.From,
+					"step %q: artifact from %q: %w",
+					step.Name, art.From, errMissingDepState,
 				)
 			}
 			st = st.File(llb.Copy(depSt, art.Source, art.Target))
@@ -351,7 +355,7 @@ func depMountOpts(job *pipeline.Job, depStates map[string]llb.State, exposeDeps 
 		depSt, ok := depStates[dep]
 		if !ok {
 			return nil, fmt.Errorf(
-				"job %q: missing dependency state for %q", job.Name, dep,
+				"dep %q: %w", dep, errMissingDepState,
 			)
 		}
 		opts = append(opts, llb.AddMount(

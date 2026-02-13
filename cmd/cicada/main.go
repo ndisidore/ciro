@@ -360,11 +360,21 @@ func (a *app) runAction(ctx context.Context, cmd *cli.Command) error {
 		collector = cache.NewCollector()
 	}
 
+	exports := make([]runner.Export, len(result.Exports))
+	for i, exp := range result.Exports {
+		exports[i] = runner.Export{
+			Definition: exp.Definition,
+			JobName:    exp.JobName,
+			Local:      exp.Local,
+			Dir:        exp.Dir,
+		}
+	}
+
 	return a.executePipeline(ctx, cmd, pipelineRunParams{
 		path:           path,
 		pipe:           p,
 		jobs:           jobs,
-		exports:        result.Exports,
+		exports:        exports,
 		cwd:            cwd,
 		cacheExports:   cacheExports,
 		cacheImports:   cacheImports,
@@ -377,7 +387,7 @@ type pipelineRunParams struct {
 	path           string
 	pipe           pipeline.Pipeline
 	jobs           []runner.Job
-	exports        []builder.LocalExport
+	exports        []runner.Export
 	cwd            string
 	cacheExports   []bkclient.CacheOptionsEntry
 	cacheImports   []bkclient.CacheOptionsEntry

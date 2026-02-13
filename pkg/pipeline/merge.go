@@ -91,10 +91,11 @@ func ExpandAliases(jobs []Job, aliases map[string][]string) ([]Job, error) {
 
 	result := make([]Job, len(jobs))
 	for i := range jobs {
-		result[i] = jobs[i]
+		c := jobs[i].Clone()
 		if len(jobs[i].DependsOn) > 0 {
-			result[i].DependsOn = expandDeps(jobs[i].DependsOn, aliases)
+			c.DependsOn = expandDeps(jobs[i].DependsOn, aliases)
 		}
+		result[i] = c
 	}
 	return result, nil
 }
